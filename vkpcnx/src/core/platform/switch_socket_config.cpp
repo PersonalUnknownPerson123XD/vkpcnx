@@ -13,6 +13,8 @@
 #include <borealis/core/logger.hpp>
 #include <switch.h>
 
+#include "core/saltynx/saltynx_api.h"
+
 extern "C" {
 
 Result __real_socketInitialize(const SocketInitConfig *config);
@@ -35,6 +37,14 @@ Result __wrap_socketInitialize(const SocketInitConfig *config) {
   // HTTP request then failed in ~2–5 ms with curl "Couldn't connect to server"
   // (bsdInitialize / sessionmgrCreate can fail when sm or bsd:u won't clone
   // that many sessions). Application userAppInit already asks for 12.
+  // The SaltySD handshake needs one free session; later in startup the
+  // process has used most of its session budget (bsd alone takes ~14), so
+  // grab Status Monitor's shared memory now, on a helper thread.
+  {
+    AppletType at = appletGetAppletType();
+    if (at == AppletType_Application || at == AppletType_SystemApplication)
+      vkpcnx_nxfps_early_start(174);
+  }
   Result rc = __real_socketInitialize(&cfg);
   vkpcnx_socket_init_rc = rc;
   vkpcnx_socket_bsd_sessions = cfg.num_bsd_sessions;
@@ -52,6 +62,12 @@ void logNetworkStartup() {
     "NET: socketInitialize rc={:#x} bsd_sessions={} sb_efficiency={} udp_rx={:#x}",
     vkpcnx_socket_init_rc, vkpcnx_socket_bsd_sessions, vkpcnx_socket_sb_efficiency,
     vkpcnx_socket_udp_rx
+  );
+  s64 cur = 0, lim = 0, peak = 0;
+  Result src = vkpcnx_session_usage(&cur, &lim, &peak);
+  brls::Logger::info(
+    "NET: sessions rc={:#x} current={} limit={} peak={}", src, (long long)cur, (long long)lim,
+    (long long)peak
   );
   NifmInternetConnectionType type{};
   u32 strength = 0;

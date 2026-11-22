@@ -1,11 +1,13 @@
 #include <borealis.hpp>
 
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "activity/launch_queue_activity.hpp"
 #include "activity/login_activity.hpp"
@@ -145,6 +147,23 @@ int main(int argc, char *argv[]) {
   brls::Application::getExitEvent()->subscribe([] {
     brls::Logger::info("exit: Application::exit starting (tearing down UI)");
     vkpcnx::diag::flushLogging();
+#ifdef __SWITCH__
+    // Teardown stopped dead after "delete AppletFrame main/root" in harica15
+    // logs: the OS then force-kills us (error screen). If the UI/threads
+    // still haven't finished in 6 s, release the exit lock and leave ourselves.
+    static std::atomic<bool> exitFinished{false};
+    brls::Application::getExitDoneEvent()->subscribe([] { exitFinished = true; });
+    std::thread([] {
+      for (int i = 0; i < 60 && !exitFinished; i++)
+        svcSleepThread(100ULL * 1000 * 1000);
+      if (exitFinished)
+        return;
+      brls::Logger::error("exit: watchdog — UI teardown stuck for 6 s, forcing exit");
+      vkpcnx::diag::flushLogging();
+      appletUnlockExit();
+      svcExitProcess();
+    }).detach();
+#endif
   });
   brls::Application::getExitDoneEvent()->subscribe([] {
     brls::Logger::info("exit: UI and worker threads stopped, destroying platform");
