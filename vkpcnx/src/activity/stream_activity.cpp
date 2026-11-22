@@ -497,10 +497,14 @@ void StreamActivity::onContentAvailable() {
   setupInput();
   if (session_)
     session_->start(buildConfig());
-    // A shortcut launch never went through the catalog, so nobody has asked for
-    // the account yet; the overlay's "time left" falls back to its balance
-    if (!AccountInfo::instance().get())
+  // A shortcut launch never went through the catalog, so nobody has asked
+  // for the account yet; the overlay counts down from minutes_balance
+  if (!playgroundMode_) {
+    if (AccountInfo::instance().get())
+      applyProfileCountdown();
+    else
       AccountInfo::instance().fetchAsync();
+  }
 }
 
 void StreamActivity::setupSession() {
@@ -584,6 +588,16 @@ void StreamActivity::setupSession() {
       leave();
   };
   session->onTimeLeft = [this](int64_t seconds) {
+    // The game server reports ~10 years for free-minutes accounts; once we
+    // have the profile balance we count down from that and ignore these.
+    if (seconds >= kUnlimitedTimeLeftThresholdSeconds) {
+      if (profileBalance_.ready)
+        return;
+      lastTimeLeftSeconds_ = seconds;
+      applyProfileCountdown();
+      return;
+    }
+    lastTimeLeftSeconds_ = seconds;
     for (int64_t warning : kTimeLeftAlertsSeconds) {
       if (lastTimeLeftSeconds_ > warning && seconds <= warning) {
         brls::Logger::info("Stream: {} s of play time left, alerting controllers", seconds);
@@ -591,11 +605,6 @@ void StreamActivity::setupSession() {
         platform::alertControllers();
         break;
       }
-    }
-    lastTimeLeftSeconds_ = seconds;
-    if (seconds >= kUnlimitedTimeLeftThresholdSeconds) {
-      timer->setVisibility(brls::Visibility::GONE);
-      return;
     }
     int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
     char buf[32];
@@ -608,7 +617,13 @@ void StreamActivity::setupSession() {
     timer->setText(buf);
     timer->setVisibility(brls::Visibility::VISIBLE);
   };
-  session->onTimerDisabled = [this] { timer->setVisibility(brls::Visibility::GONE); };
+  session->onTimerDisabled = [this] {
+    if (!profileBalance_.ready || profileBalance_.unlimited)
+      timer->setVisibility(brls::Visibility::GONE);
+  };
+  AccountInfo::instance().updated().subscribe([this](const nlohmann::json &) {
+    applyProfileCountdown();
+  });
   session->onCursor = [this](const CursorImage &c) {
     cursorShown_ = !c.rgba.empty();
     brls::Logger::debug(
@@ -861,6 +876,7 @@ void StreamActivity::onKey(brls::KeyState key) {
 void StreamActivity::pollInputs() {
   if (hudVisible_)
     updateHud();
+  tickProfileTimer();
   logStats();
   auto *input = brls::Application::getPlatform()->getInputManager();
 
@@ -1822,6 +1838,70 @@ void StreamActivity::placeOsk() {
     placeOskButton(left, root->getY() + kbH + kMargin);
 }
 
+void StreamActivity::tickProfileTimer() {
+  if (!profileBalance_.ready || profileBalance_.unlimited)
+    return;
+  int64_t elapsed = 0;
+  if (sessionStartedAt_)
+    elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - *sessionStartedAt_
+    ).count();
+  int64_t seconds = profileBalance_.secondsAtStart - elapsed;
+  if (seconds < 0)
+    seconds = 0;
+  for (int64_t warning : kTimeLeftAlertsSeconds) {
+    if (lastTimeLeftSeconds_ > warning && seconds <= warning) {
+      brls::Logger::info("Stream: {} s of play time left, alerting controllers", seconds);
+      brls::Application::notify(timeLeftWarningText(warning));
+      platform::alertControllers();
+      break;
+    }
+  }
+  lastTimeLeftSeconds_ = seconds;
+  int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
+  char buf[32];
+  if (h > 0)
+    std::snprintf(buf, sizeof buf, "%lld:%02lld:%02lld", (long long)h, (long long)m, (long long)s);
+  else
+    std::snprintf(buf, sizeof buf, "%02lld:%02lld", (long long)m, (long long)s);
+  timer->setText(buf);
+  timer->setVisibility(brls::Visibility::VISIBLE);
+}
+
+void StreamActivity::applyProfileCountdown() {
+  if (profileBalance_.ready || playgroundMode_)
+    return;
+  auto snap = AccountInfo::instance().snapshotBalance();
+  if (!snap.ready)
+    return;
+  profileBalance_ = snap;
+  if (!profileBalanceLogged_) {
+    profileBalanceLogged_ = true;
+    if (snap.unlimited)
+      brls::Logger::info("Stream: play time from profile: unlimited");
+    else
+      brls::Logger::info(
+        "Stream: play time from profile: {} s left ({})", snap.secondsAtStart, snap.source
+      );
+  }
+  if (snap.unlimited) {
+    timer->setVisibility(brls::Visibility::GONE);
+    return;
+  }
+  // Start the on-screen countdown from this snapshot; collectSessionMetrics
+  // subtracts elapsed from the same value for the overlay
+  lastTimeLeftSeconds_ = snap.secondsAtStart;
+  int64_t seconds = snap.secondsAtStart;
+  int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
+  char buf[32];
+  if (h > 0)
+    std::snprintf(buf, sizeof buf, "%lld:%02lld:%02lld", (long long)h, (long long)m, (long long)s);
+  else
+    std::snprintf(buf, sizeof buf, "%02lld:%02lld", (long long)m, (long long)s);
+  timer->setText(buf);
+  timer->setVisibility(brls::Visibility::VISIBLE);
+}
+
 vkpcnx::StreamOverlay::SessionMetrics StreamActivity::collectSessionMetrics() const {
   vkpcnx::StreamOverlay::SessionMetrics m{};
   m.gameServerName = gameServerName_;
@@ -1846,16 +1926,25 @@ vkpcnx::StreamOverlay::SessionMetrics StreamActivity::collectSessionMetrics() co
       )
                          .count());
 
-  // The server reports ~10 years for free-minutes accounts as well; the real
-  // balance is minutes_balance from /users/me
+  // Overlay remaining time: profile minutes_balance at session start, minus
+  // elapsed play time. The game-server counters (~10 years for free minutes)
+  // are ignored once the profile snapshot is ready.
   m.timeLeftUnlimited = false;
-  if (lastTimeLeftSeconds_ >= kUnlimitedTimeLeftThresholdSeconds) {
-    bool unlimited = false;
-    auto left = AccountInfo::instance().secondsLeft(unlimited);
-    m.timeLeftUnlimited = unlimited;
-    m.sessionSecondsLeft = left ? static_cast<int>(std::min<int64_t>(*left, 1 << 30)) : -1;
-  } else {
+  if (profileBalance_.ready) {
+    m.timeLeftUnlimited = profileBalance_.unlimited;
+    if (profileBalance_.unlimited)
+      m.sessionSecondsLeft = 0;
+    else {
+      int64_t left = profileBalance_.secondsAtStart - m.sessionSecondsElapsed;
+      if (left < 0)
+        left = 0;
+      m.sessionSecondsLeft = static_cast<int>(std::min<int64_t>(left, 1 << 30));
+    }
+  } else if (lastTimeLeftSeconds_ > 0 &&
+             lastTimeLeftSeconds_ < kUnlimitedTimeLeftThresholdSeconds) {
     m.sessionSecondsLeft = static_cast<int>(lastTimeLeftSeconds_);
+  } else {
+    m.sessionSecondsLeft = -1; // unknown (waiting for /users/me)
   }
 
   return m;

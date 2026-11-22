@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "core/account_info.hpp"
 #include "core/controller_profile.hpp"
 #include "core/stream/input_sink.hpp"
 #include "core/stream/play_url.hpp"
@@ -202,6 +203,12 @@ private:
   // Last (soonest-expiring) value from any SC_*_TIME_LEFT source; the merge
   // across sources happens in GameServerClient itself.
   int64_t lastTimeLeftSeconds_ = 0;
+  // Profile minutes at session start; overlay/timer count down from this
+  AccountInfo::BalanceSnapshot profileBalance_;
+  bool profileBalanceLogged_ = false;
+  void applyProfileCountdown();
+  void tickProfileTimer();
+
 
   // Set once, the first time the session reaches State::Streaming; not reset
   // on a mid-session Reconnecting → Streaming round trip.

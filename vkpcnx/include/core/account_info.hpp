@@ -21,6 +21,17 @@ public:
   // (the caller then shows "unlimited"); `unlimited` tells the two apart.
   std::optional<int64_t> secondsLeft(bool &unlimited) const;
 
+  // Snapshot of the profile balance, frozen at the moment it is taken. The
+  // stream counts down from this (profile_at_start - elapsed) and ignores the
+  // 10-year placeholders the game server sends for free-minutes accounts.
+  struct BalanceSnapshot {
+    bool ready = false;
+    bool unlimited = false;
+    int64_t secondsAtStart = 0; // unused when unlimited
+    std::string source;         // which field, for the log
+  };
+  BalanceSnapshot snapshotBalance() const;
+
   brls::Event<const nlohmann::json &> &updated() { return onUpdated; }
 
 private:

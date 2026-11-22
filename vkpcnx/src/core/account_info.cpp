@@ -96,3 +96,21 @@ std::optional<int64_t> AccountInfo::secondsLeft(bool &unlimited) const {
   ).count();
   return std::max<int64_t>(seconds, 0);
 }
+
+AccountInfo::BalanceSnapshot AccountInfo::snapshotBalance() const {
+  BalanceSnapshot snap;
+  bool unlimited = false;
+  auto left = secondsLeft(unlimited);
+  snap.unlimited = unlimited;
+  if (unlimited) {
+    snap.ready = true;
+    snap.source = "unlimited plan";
+    return snap;
+  }
+  if (!left)
+    return snap;
+  snap.ready = true;
+  snap.secondsAtStart = *left;
+  snap.source = "minutes_balance";
+  return snap;
+}
