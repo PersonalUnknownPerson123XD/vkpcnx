@@ -8,9 +8,11 @@
 #include <switch.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 
 #include "core/saltynx/saltynx_api.h"
 
@@ -65,12 +67,22 @@ static_assert(sizeof(NxFpsSharedBlock) == 174, "NxFpsSharedBlock must match Stat
 
 constexpr uint32_t kMagic = 0x465053; // 'SPF'
 constexpr uint8_t kApiEgl = 2;
+constexpr u64 kTicksPerSec = 19200000ull;
+constexpr uint32_t kTick60 = static_cast<uint32_t>(kTicksPerSec / 60);
 
 SharedMemory g_shmem{};
 NxFpsSharedBlock *g_block = nullptr;
 bool g_mapped = false;
+bool g_gaveUpSalty = false;
 u64 g_lastTick = 0;
 int g_tickItr = 0;
+u64 g_lastInitAttempt = 0;
+u64 g_lastFpsLog = 0;
+ptrdiff_t g_offset = -1;
+uintptr_t g_base = 0;
+
+std::atomic<bool> g_beatStop{false};
+std::thread g_beat;
 
 NxFpsSharedBlock *findBlock(uintptr_t base) {
   for (ptrdiff_t off = 0; off + 4 <= 0x1000; off += 4) {
@@ -81,65 +93,172 @@ NxFpsSharedBlock *findBlock(uintptr_t base) {
   return nullptr;
 }
 
+NxFpsSharedBlock *findFreeSlot(uintptr_t base) {
+  // Prefer a 174-byte zero run so we don't clobber another plugin's slot.
+  const size_t need = sizeof(NxFpsSharedBlock);
+  for (ptrdiff_t off = 0; off + static_cast<ptrdiff_t>(need) <= 0x1000; off += 4) {
+    auto *p = reinterpret_cast<const uint8_t *>(base + off);
+    bool empty = true;
+    for (size_t i = 0; i < need; i++) {
+      if (p[i]) {
+        empty = false;
+        break;
+      }
+    }
+    if (empty)
+      return reinterpret_cast<NxFpsSharedBlock *>(base + off);
+  }
+  return nullptr;
+}
+
+bool portUp(const char *name) {
+  Handle h = 0;
+  for (int i = 0; i < 8; i++) {
+    if (R_SUCCEEDED(svcConnectToNamedPort(&h, name))) {
+      svcCloseHandle(h);
+      return true;
+    }
+    svcSleepThread(1000 * 1000);
+  }
+  return false;
+}
+
 bool mapShared(Handle handle) {
   shmemLoadRemote(&g_shmem, handle, 0x1000, Perm_Rw);
-  if (R_FAILED(shmemMap(&g_shmem))) {
-    brls::Logger::warning("NX-FPS: shmemMap failed");
+  Result rc = shmemMap(&g_shmem);
+  if (R_FAILED(rc)) {
+    brls::Logger::warning("NX-FPS: shmemMap failed: 0x{:x} handle={:#x}", rc, handle);
     return false;
   }
   g_mapped = true;
   return true;
 }
 
-} // namespace
+void writeSample(NxFpsSharedBlock *b, uint32_t delta, float fps) {
+  // Status Monitor averages all 10 FPSticks (zeros would make FPSavg huge → "n/d").
+  b->FPSticks[g_tickItr] = delta ? delta : kTick60;
+  g_tickItr = (g_tickItr + 1) % 10;
+  uint64_t sum = 0;
+  for (int i = 0; i < 10; i++)
+    sum += b->FPSticks[i] ? b->FPSticks[i] : kTick60;
+  const float avg = (10.f * static_cast<float>(kTicksPerSec)) / static_cast<float>(sum);
+  b->FPSavg = avg;
+  const uint8_t rounded = static_cast<uint8_t>(std::lround(std::clamp(avg, 1.f, 255.f)));
+  b->FPS = fps > 0.f ? static_cast<uint8_t>(std::lround(std::clamp(fps, 1.f, 255.f))) : rounded;
+  b->API = kApiEgl;
+  b->pluginActive = true;
+  b->frameNumber++;
+}
 
-void init() {
+void primeBlock(NxFpsSharedBlock *b) {
+  for (int i = 0; i < 10; i++)
+    b->FPSticks[i] = kTick60;
+  b->API = kApiEgl;
+  b->FPS = 60;
+  b->FPSavg = 60.f;
+  b->pluginActive = true;
+  b->MAGIC = kMagic;
+}
+
+void logProcessContext() {
   AppletType at = appletGetAppletType();
   const bool isApp = at == AppletType_Application || at == AppletType_SystemApplication;
+  u64 programId = 0, isKernelApp = 0;
+  svcGetInfo(&programId, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
+  svcGetInfo(&isKernelApp, InfoType_IsApplication, CUR_PROCESS_HANDLE, 0);
+  // SaltyNX hijack.c: TID > 0x01FFFFFFFFFFFFFF or (TID & 0x1F00) != 0 →
+  // "homebrew application, aborting bootstrap". Process name "hbloader" is
+  // also skipped as title-replacement. Our HOME-shortcut TID is 05… so
+  // SaltyNX will not inject NX-FPS into this process; we write the block
+  // ourselves into the sysmodule's 0x1000 shared memory.
+  const bool saltyWouldInject =
+    programId > 0x010000000000FFFFULL && programId <= 0x01FFFFFFFFFFFFFFULL &&
+    (programId & 0x1F00) == 0;
+  brls::Logger::info(
+    "NX-FPS: applet type={} ({}) programId={:016X} kernelIsApplication={} "
+    "SaltyNX-would-inject={}",
+    static_cast<int>(at), isApp ? "Application" : "applet", programId, (int)isKernelApp,
+    saltyWouldInject
+  );
   if (!isApp) {
     brls::Logger::info(
-      "NX-FPS: launched as applet (type {}); Status Monitor only reads an Application PID "
-      "— use a HOME shortcut for the firmware FPS overlay",
-      static_cast<int>(at)
+      "NX-FPS: not an Application — Status Monitor's pmdmntGetApplicationProcessId "
+      "will miss us. Launch from a HOME shortcut, not hbmenu/album."
     );
+  }
+  if (!saltyWouldInject) {
+    brls::Logger::info(
+      "NX-FPS: SaltyNX will not inject Core/NX-FPS into this homebrew title "
+      "(or a process named hbloader). Writing the shared-memory block ourselves."
+    );
+  }
+}
+
+bool tryInitOnce() {
+  const bool inject = portUp("InjectServ");
+  const bool salty = portUp("SaltySD");
+  brls::Logger::info("NX-FPS: ports InjectServ={} SaltySD={}", inject, salty);
+  if (!inject && !salty) {
+    brls::Logger::info(
+      "NX-FPS: SaltyNX is not running (no InjectServ/SaltySD). "
+      "Install masagrator/SaltyNX and Status Monitor Overlay, then reboot."
+    );
+    g_gaveUpSalty = true;
+    return false;
   }
 
   Result rc = vkpcnx_SaltySD_Connect();
   if (R_FAILED(rc)) {
-    brls::Logger::info("NX-FPS: SaltyNX not found (SaltySD port), Status Monitor FPS unavailable");
-    return;
+    brls::Logger::warning("NX-FPS: SaltySD_Connect failed: 0x{:x} (port busy? will retry)", rc);
+    return false;
   }
+  brls::Logger::info("NX-FPS: SaltySD connected");
 
   Handle remote = 0;
   rc = vkpcnx_SaltySD_GetSharedMemoryHandle(&remote);
+  brls::Logger::info("NX-FPS: GetSharedMemoryHandle rc=0x{:x} handle={:#x}", rc, remote);
   if (R_FAILED(rc) || !remote) {
-    brls::Logger::warning("NX-FPS: GetSharedMemoryHandle failed: 0x{:x}", rc);
+    brls::Logger::warning("NX-FPS: no shared-memory handle");
     vkpcnx_SaltySD_Term();
-    return;
+    return false;
   }
 
   if (!mapShared(remote)) {
     vkpcnx_SaltySD_Term();
-    return;
+    return false;
   }
 
-  uintptr_t base = reinterpret_cast<uintptr_t>(shmemGetAddr(&g_shmem));
-  g_block = findBlock(base);
-  if (!g_block) {
-    // No NX-FPS plugin hooked us (static EGL). Allocate our own slot.
-    ptrdiff_t offset = 0;
+  g_base = reinterpret_cast<uintptr_t>(shmemGetAddr(&g_shmem));
+  brls::Logger::info("NX-FPS: shm mapped at {:#x} size=0x1000", (unsigned long long)g_base);
+
+  g_block = findBlock(g_base);
+  if (g_block) {
+    g_offset = reinterpret_cast<uintptr_t>(g_block) - g_base;
+    brls::Logger::info("NX-FPS: found existing MAGIC 0x465053 at offset {}", (long long)g_offset);
+  } else {
+    ptrdiff_t offset = -1;
     rc = vkpcnx_SaltySD_CheckIfSharedMemoryAvailable(&offset, sizeof(NxFpsSharedBlock));
+    brls::Logger::info(
+      "NX-FPS: CheckIfSharedMemoryAvailable rc=0x{:x} offset={}", rc, (long long)offset
+    );
     if (R_SUCCEEDED(rc) && offset >= 0 &&
         static_cast<size_t>(offset) + sizeof(NxFpsSharedBlock) <= 0x1000) {
-      g_block = reinterpret_cast<NxFpsSharedBlock *>(base + offset);
+      g_block = reinterpret_cast<NxFpsSharedBlock *>(g_base + offset);
+      g_offset = offset;
       std::memset(g_block, 0, sizeof(*g_block));
-      g_block->MAGIC = kMagic;
-      brls::Logger::info("NX-FPS: allocated Status Monitor block at offset {}", (long long)offset);
+    } else if (auto *slot = findFreeSlot(g_base)) {
+      g_block = slot;
+      g_offset = reinterpret_cast<uintptr_t>(slot) - g_base;
+      brls::Logger::warning(
+        "NX-FPS: alloc failed, using zeroed fallback slot at offset {}", (long long)g_offset
+      );
     } else {
-      brls::Logger::warning("NX-FPS: CheckIfSharedMemoryAvailable failed: 0x{:x}", rc);
+      // Last resort: offset 0. Status Monitor scans the whole page for MAGIC.
+      g_block = reinterpret_cast<NxFpsSharedBlock *>(g_base);
+      g_offset = 0;
+      std::memset(g_block, 0, sizeof(*g_block));
+      brls::Logger::warning("NX-FPS: no free slot, writing MAGIC at offset 0");
     }
-  } else {
-    brls::Logger::info("NX-FPS: found existing Status Monitor block");
   }
 
   vkpcnx_SaltySD_Term();
@@ -148,48 +267,85 @@ void init() {
     shmemUnmap(&g_shmem);
     shmemClose(&g_shmem);
     g_mapped = false;
-    return;
+    return false;
   }
 
-  g_block->API = kApiEgl;
-  g_block->pluginActive = true;
-  brls::Logger::info("NX-FPS: writing FPS for Status Monitor (EGL, Application={})", isApp);
+  primeBlock(g_block);
+  {
+    const uint32_t magic = g_block->MAGIC;
+    const uint8_t fps = g_block->FPS;
+    brls::Logger::info(
+      "NX-FPS: writing block magic=0x{:x} offset={} addr={:#x} pluginActive=1 FPS={}",
+      magic, (long long)g_offset, (unsigned long long)(g_base + g_offset), fps
+    );
+  }
+  return true;
+}
+
+void beatLoop() {
+  // Status Monitor sets pluginActive=false and waits 100ms. Keep the flag
+  // alive even if the UI thread hitches while Tesla is open.
+  while (!g_beatStop.load(std::memory_order_relaxed)) {
+    if (g_block)
+      g_block->pluginActive = true;
+    svcSleepThread(10 * 1000 * 1000ull); // 10 ms
+  }
+}
+
+} // namespace
+
+void init() {
+  logProcessContext();
+  if (tryInitOnce() && !g_beat.joinable()) {
+    g_beatStop = false;
+    g_beat = std::thread(beatLoop);
+  }
+  g_lastInitAttempt = armGetSystemTick();
 }
 
 void tick() {
-  if (!g_block)
+  if (!g_block) {
+    if (g_gaveUpSalty)
+      return;
+    const u64 now = armGetSystemTick();
+    if (now - g_lastInitAttempt < kTicksPerSec * 3)
+      return;
+    g_lastInitAttempt = now;
+    brls::Logger::info("NX-FPS: retrying attach to SaltyNX shared memory");
+    if (tryInitOnce() && !g_beat.joinable()) {
+      g_beatStop = false;
+      g_beat = std::thread(beatLoop);
+    }
     return;
-  g_block->pluginActive = true;
-  g_block->API = kApiEgl;
-
-  const float fps = static_cast<float>(brls::Application::getFPS());
-  g_block->FPS = static_cast<uint8_t>(std::lround(std::clamp(fps, 0.f, 255.f)));
+  }
 
   const u64 now = armGetSystemTick();
-  if (g_lastTick) {
-    g_block->FPSticks[g_tickItr] = static_cast<uint32_t>(now - g_lastTick);
-    g_tickItr = (g_tickItr + 1) % 10;
-    uint64_t sum = 0;
-    int n = 0;
-    for (int i = 0; i < 10; i++) {
-      uint32_t t = g_block->FPSticks[i];
-      if (t) {
-        sum += t;
-        n++;
-      }
-    }
-    if (n && sum)
-      g_block->FPSavg = (static_cast<float>(n) * 19200000.f) / static_cast<float>(sum);
-    else
-      g_block->FPSavg = fps;
-  } else {
-    g_block->FPSavg = fps;
-  }
+  uint32_t delta = g_lastTick ? static_cast<uint32_t>(now - g_lastTick) : kTick60;
+  if (delta < kTicksPerSec / 240)
+    delta = kTicksPerSec / 240; // cap at 240 fps
+  if (delta > kTicksPerSec)
+    delta = kTick60;
   g_lastTick = now;
-  g_block->frameNumber++;
+  const float fps = static_cast<float>(kTicksPerSec) / static_cast<float>(delta);
+  writeSample(g_block, delta, fps);
+
+  if (now - g_lastFpsLog >= kTicksPerSec * 5) {
+    g_lastFpsLog = now;
+    const uint8_t fps = g_block->FPS;
+    const float avg = g_block->FPSavg;
+    const bool active = g_block->pluginActive;
+    const uint64_t frame = g_block->frameNumber;
+    brls::Logger::info(
+      "NX-FPS: wrote FPS={} FPSavg={:.1f} pluginActive={} frame={} offset={}",
+      fps, avg, active, (unsigned long long)frame, (long long)g_offset
+    );
+  }
 }
 
 void shutdown() {
+  g_beatStop = true;
+  if (g_beat.joinable())
+    g_beat.join();
   if (g_block)
     g_block->pluginActive = false;
   g_block = nullptr;

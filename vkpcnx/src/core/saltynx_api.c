@@ -83,6 +83,8 @@ Result vkpcnx_SaltySD_CheckIfSharedMemoryAvailable(ptrdiff_t *offset, u64 size) 
 
 Result vkpcnx_SaltySD_GetSharedMemoryHandle(Handle *retrieve) {
     Result ret = 0;
+    if (retrieve)
+        *retrieve = 0;
     IpcCommand c;
     ipcInitialize(&c);
     ipcSendPid(&c);
@@ -106,9 +108,15 @@ Result vkpcnx_SaltySD_GetSharedMemoryHandle(Handle *retrieve) {
             u64 result;
             u64 reserved[2];
         } *resp = (struct output *)r.Raw;
-        ret = resp->result;
-        if (!ret)
+        /* Official client checks resp->result, but a copied handle in the
+         * response is enough: some replies have a usable handle even if the
+         * raw result word is unread / unaligned. */
+        if (r.NumHandles > 0 && r.Handles[0])
             *retrieve = r.Handles[0];
+        if (resp && resp->result)
+            ret = (Result)resp->result;
+        if (*retrieve)
+            ret = 0;
     }
     return ret;
 }

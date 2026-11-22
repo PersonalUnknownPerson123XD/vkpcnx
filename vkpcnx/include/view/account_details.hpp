@@ -40,6 +40,15 @@ public:
       openControllerProfileDialog(0, "");
       return true;
     });
+    // DetailCell always keeps a shrink=0 detail label (max 300px). Even empty,
+    // yoga can leave the title a sliver and ellipsize "Кнопки и стики" to "Кно...".
+    this->controllerProfileCell->detail->setVisibility(brls::Visibility::GONE);
+    this->controllerProfileCell->detail->setMaxWidth(0);
+    this->controllerProfileCell->detail->setWidth(0);
+    this->controllerProfileCell->title->setGrow(1);
+    this->controllerProfileCell->title->setShrink(1);
+    this->controllerProfileCell->title->setSingleLine(true);
+    this->controllerProfileCell->setText("Кнопки и стики");
     this->gamepadPointerCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadPointerDialog());
       return true;

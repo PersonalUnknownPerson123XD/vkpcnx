@@ -8,7 +8,7 @@
 
     <brls:AppletFrame
         id="sidepanel/applet"
-        width="480"
+        width="auto"
         height="auto"
         headerHidden="true"
         footerHidden="true"

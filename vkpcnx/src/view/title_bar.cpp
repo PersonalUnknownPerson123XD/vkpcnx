@@ -65,7 +65,7 @@ void CustomTitlebarActivity::setupTitleBar() {
   accountBox->addGestureRecognizer(new brls::TapGestureRecognizer(accountBox));
   accountBox->registerClickAction([](brls::View *view) {
     auto content = new AccountDetails();
-    vkpcnx::SidePanel *panel = new vkpcnx::SidePanel(content, 560);
+    vkpcnx::SidePanel *panel = new vkpcnx::SidePanel(content, 640);
     panel->open();
     return true;
   });

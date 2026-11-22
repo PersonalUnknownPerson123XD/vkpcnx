@@ -1,6 +1,6 @@
-<brls:Box id="account_details/root" width="auto" height="auto" grow="1" axis="column">
-<brls:ScrollingFrame width="auto" height="auto" grow="1" alignItems="stretch">
-<brls:Box axis="column" padding="30" width="auto" height="auto">
+<brls:Box id="account_details/root" width="100%" height="auto" grow="1" axis="column">
+<brls:ScrollingFrame width="100%" height="auto" grow="1" alignItems="stretch">
+<brls:Box axis="column" padding="30" width="100%" height="auto">
   <brls:Box marginBottom="20" alignItems="center">
     <brls:Image id="account_details/avatar" width="60" height="60" cornerRadius="999" marginRight="20"/>
     <brls:Label id="account_details/username" fontSize="30"/>
