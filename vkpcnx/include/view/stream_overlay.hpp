@@ -47,6 +47,9 @@ public:
       return true;
     });
 
+    // Superseded by the presets in the buttons-and-sticks editor; a global layout
+    // switch that a per-game profile overrides only confused
+    this->gamepadMappingModeCell->setVisibility(brls::Visibility::GONE);
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadMappingDialog());
       return true;
@@ -109,9 +112,6 @@ public:
   void setGame(int id, std::string name) {
     this->gameId = id;
     this->gameName = std::move(name);
-    this->controllerProfileCell->setDetailText(
-      id > 0 && controls::hasGameOverride(id) ? "Свой профиль" : "Общий"
-    );
   }
 
   void setSessionMetrics(SessionMetrics metrics) { this->metrics = metrics; };
@@ -185,7 +185,7 @@ private:
   BRLS_BIND(brls::Label, showLessLabel, "stream_overlay/show_less");
 
   BRLS_BIND(brls::DetailCell, gamepadMappingModeCell, "stream_overlay/gamepad_mapping_mode");
-  BRLS_BIND(brls::DetailCell, controllerProfileCell, "stream_overlay/controller_profile");
+  BRLS_BIND(brls::Button, controllerProfileCell, "stream_overlay/controller_profile");
   BRLS_BIND(brls::DetailCell, gamepadPointerCell, "stream_overlay/gamepad_pointer");
   BRLS_BIND(brls::DetailCell, touchscreenModeCell, "stream_overlay/touchscreen_mode");
 

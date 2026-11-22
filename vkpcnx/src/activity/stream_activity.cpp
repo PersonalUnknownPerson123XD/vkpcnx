@@ -950,6 +950,7 @@ StreamActivity::PadAction StreamActivity::pollGamepads(brls::InputManager *input
   if (profileRevision_ != controls::revision()) {
     profileRevision_ = controls::revision();
     profile_ = controls::loadEffective(game_.id);
+    brls::Logger::info("Controls: {}", controls::describe(game_.id, profile_));
   }
   const controls::Profile &profile = profile_;
   // "gamepad pointer": pads drive the mouse and send no gamepad events at all

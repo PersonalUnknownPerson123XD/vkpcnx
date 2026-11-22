@@ -4,6 +4,7 @@
 // that game's queue. Switch only; elsewhere supported() is false.
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace vkpcnx::forwarder {
 
@@ -11,7 +12,8 @@ struct Request {
   int gameId = 0;
   int launcherId = 0;
   std::string name;     // title shown on HOME
-  std::string coverUrl; // becomes the 256x256 HOME icon
+  std::string coverUrl; // last-resort source of the 256x256 HOME icon (centre-cropped)
+  std::vector<std::string> iconUrls; // square icon sources, tried in order before the cover
   std::string args;     // extra argv appended after --launcher/--game (leading space), e.g. " --name=..."
 };
 

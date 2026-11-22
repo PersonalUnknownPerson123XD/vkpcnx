@@ -50,15 +50,9 @@ ControllerProfileContent::ControllerProfileContent(int gameId, const std::string
   content->addView(textLabel(gameId > 0 ? "Управление: " + gameName : "Управление (общий профиль)", 28, false));
   scopeLabel = textLabel("", 15, true);
   scopeLabel->setMarginTop(8);
-  scopeLabel->setMarginBottom(16);
+  scopeLabel->setMarginBottom(20);
   content->addView(scopeLabel);
-  auto *hotkeys = textLabel(
-    "Комбинации L+R+Y (панель), L+R+− (клавиатура) и L+R+(+) (контроллер как мышь) работают всегда "
-    "и не переназначаются.",
-    15, true
-  );
-  hotkeys->setMarginBottom(20);
-  content->addView(hotkeys);
+
 
   // -- presets
   auto *nintendo = new brls::Button();
@@ -130,7 +124,7 @@ ControllerProfileContent::ControllerProfileContent(int gameId, const std::string
   content->addView(deadzoneCell);
 
   // -- every button
-  auto *buttonsTitle = textLabel("Кнопки: что отправляется в игру", 15, true);
+  auto *buttonsTitle = textLabel("Кнопки", 15, true);
   buttonsTitle->setMarginTop(24);
   content->addView(buttonsTitle);
   std::vector<std::string> options{"Не передавать"};
@@ -178,11 +172,11 @@ void ControllerProfileContent::refreshScope() {
   if (gameId > 0)
     scopeLabel->setText(
       controls::hasGameOverride(gameId)
-        ? "У этой игры свой профиль: изменения действуют только в ней."
-        : "Сейчас игра использует общий профиль. Любое изменение создаст для неё свой профиль."
+        ? "Профиль только для этой игры"
+        : "Общий профиль; изменение создаст профиль игры"
     );
   else
-    scopeLabel->setText("Общий профиль действует во всех играх, у которых нет своего.");
+    scopeLabel->setText("Для всех игр без своего профиля");
 }
 
 void ControllerProfileContent::refreshCells() {
@@ -202,10 +196,16 @@ void ControllerProfileContent::refreshCells() {
 void ControllerProfileContent::save() {
   dirty = false;
   if (gameId > 0) {
-    if (!controls::saveGameOverride(gameId, profile))
-      brls::Application::notify("Не удалось сохранить профиль игры");
+    bool ok = controls::saveGameOverride(gameId, profile);
+    // read it back: what the game will load is what counts
+    controls::Profile back;
+    ok = ok && controls::loadGameOverride(gameId, back) && back == profile;
+    brls::Logger::info("Controls: saved profile of game {}: {}", gameId, ok ? "ok" : "FAILED");
+    if (!ok)
+      brls::Application::notify("Не удалось сохранить");
   } else {
     controls::saveGlobal(profile);
+    brls::Logger::info("Controls: saved the general profile");
     // the old two-way setting stays truthful for the layouts it knows
     controls::Profile pos = controls::Profile::preset(true), lit = controls::Profile::preset(false);
     if (profile.map == pos.map)

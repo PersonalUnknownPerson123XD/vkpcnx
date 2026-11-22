@@ -352,12 +352,12 @@ static void NX_NORETURN selfExit(void)
         smExit();
     }
 
-    if (R_FAILED(rc))
-        diagAbortWithResult(rc);
-
-    // Exit() takes effect asynchronously; wait for the system to end the process
-    for (;;)
-        svcSleepThread(86400000000000ULL);
+    // Exit() takes effect asynchronously; wait a little for the system to end
+    // the process. If it could not be asked (or never does), just leave: no
+    // error screen either way.
+    if (R_SUCCEEDED(rc))
+        for (int i = 0; i < 100; i++)
+            svcSleepThread(100000000ULL);
     svcExitProcess();
     __builtin_unreachable();
 }
@@ -481,8 +481,11 @@ void loadNro(void)
     uint8_t*   rest   = (uint8_t*)   (nrobuf + sizeof(NroStart) + sizeof(NroHeader));
 
     int fd = open(g_nextNroPath, O_RDONLY);
-    if (fd < 0)
-        diagAbortWithResult(MAKERESULT(Module_HomebrewLoader, 3));
+    if (fd < 0) {
+        // vkpcnx moved or deleted: nothing to show a message with, so go back to HOME
+        fsdevUnmountAll();
+        selfExit();
+    }
 
     // Reset NRO path to load hbmenu by default next time.
     g_nextNroPath[0] = '\0';
@@ -629,6 +632,10 @@ int main(int argc, char **argv)
     memcpy(g_savedTls, (u8*)armGetTls() + 0x100, 0x100);
 
     getIsApplication();
+    // The forwarder is installed as an Application title (hbl.json: application_type 1),
+    // so it always is one. With the wrong kernel type the NRO was handed
+    // AppletType_LibraryApplet and its applet init failed right after start.
+    g_isApplication = 1;
     getIsAutomaticGameplayRecording();
     smExit(); // Close SM as we don't need it anymore.
     setupHbHeap();

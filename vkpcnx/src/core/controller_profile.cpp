@@ -226,6 +226,22 @@ Profile loadEffective(int gameId) {
   return loadGlobal();
 }
 
+std::string describe(int gameId, const Profile &p) {
+  std::string out = "game " + std::to_string(gameId) + ", " +
+                    (hasGameOverride(gameId) ? "own profile " + gamePath(gameId) : std::string("general profile")) +
+                    ": ";
+  for (int i = 0; i < S_COUNT; i++) {
+    out += kSourceNames[i];
+    out += "->";
+    out += p.map[i] < 0 ? "-" : kTargetNames[p.map[i]];
+    out += i + 1 < S_COUNT ? ", " : "";
+  }
+  out += "; swap=" + std::to_string(p.swapSticks) + " invL=" + std::to_string(p.invertLeftY) +
+         " invR=" + std::to_string(p.invertRightY) + " deadzone=" + std::to_string(p.deadzone) +
+         " trig=" + std::to_string(p.triggersFull);
+  return out;
+}
+
 uint32_t revision() { return g_revision.load(); }
 
 } // namespace vkpcnx::controls

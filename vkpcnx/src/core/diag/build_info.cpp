@@ -226,6 +226,14 @@ static std::vector<std::pair<std::string, std::string>> collectSystemInfo() {
   default:
     add("launch mode", std::to_string(static_cast<int>(appletGetAppletType())));
   }
+  {
+    u64 programId = 0, isApp = 0;
+    svcGetInfo(&programId, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
+    Result rcApp = svcGetInfo(&isApp, InfoType_IsApplication, CUR_PROCESS_HANDLE, 0);
+    std::snprintf(buf, sizeof buf, "%016llX (kernel application type: %s)", (unsigned long long)programId,
+                  R_FAILED(rcApp) ? "?" : (isApp ? "yes" : "no"));
+    add("program id", buf); // 0100... = launched through the hbmenu takeover, 05... = home shortcut
+  }
   add("operation mode", appletGetOperationMode() == AppletOperationMode_Console ? "docked" : "handheld");
   u64 total = 0, used = 0;
   svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);

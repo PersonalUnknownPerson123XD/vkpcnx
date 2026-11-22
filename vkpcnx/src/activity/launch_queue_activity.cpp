@@ -34,7 +34,8 @@ std::string pingText(int32_t pingMicros) {
 
 void LaunchQueueActivity::onContentAvailable() {
   this->title->setText(this->game.name);
-  vkpcnx::utils::loadImageFromUrl(this->image, game.pictureUrl);
+  if (!game.pictureUrl.empty())
+    vkpcnx::utils::loadImageFromUrl(this->image, game.pictureUrl);
 
   delayHandle = brls::delay(1500, [this] {
     delayHandle = 0;

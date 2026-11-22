@@ -105,6 +105,9 @@ void removeGameOverride(int gameId);
 // What a running game uses: its override if any, else the global default
 Profile loadEffective(int gameId);
 
+// One line for the log: where the profile came from and what it does
+std::string describe(int gameId, const Profile &p);
+
 // Bumped by every save/remove, so a running stream can notice changes
 uint32_t revision();
 

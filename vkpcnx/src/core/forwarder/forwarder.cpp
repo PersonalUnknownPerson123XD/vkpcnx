@@ -137,14 +137,17 @@ bool encodeIcon(const std::string &imageBytes, Bytes &jpeg) {
 }
 
 // The cover if it can be fetched, else the app's own icon
-bool makeIcon(const std::string &coverUrl, Bytes &jpeg, bool &usedCover) {
+bool makeIcon(const std::vector<std::string> &urls, Bytes &jpeg, bool &usedCover) {
   usedCover = false;
-  if (!coverUrl.empty()) {
-    auto response = Http::get(coverUrl);
+  for (const auto &url : urls) {
+    if (url.empty())
+      continue;
+    auto response = Http::get(url);
     if (response.ok() && encodeIcon(response.body, jpeg)) {
       usedCover = true;
       return true;
     }
+    brls::Logger::warning("forwarder: icon source failed: {}", url);
   }
   return readFile(BRLS_ASSET("icon/icon.jpg"), jpeg) && !jpeg.empty() && jpeg.size() <= kMaxIconBytes;
 }
@@ -194,7 +197,7 @@ struct NsAppManager {
 };
 
 std::string failure(const char *step, Result rc) {
-  return std::string("Не удалось установить ярлык (") + step + ", код " + hex(rc) + ").";
+  return std::string("Ярлык не добавлен: ") + step + " " + hex(rc);
 }
 
 // Quotes a path for hbloader's argv parsing when needed
@@ -227,26 +230,25 @@ unsigned long long titleIdForGame(int gameId) {
 }
 
 Outcome install(const Request &req, const std::function<void(const std::string &)> &progress) {
-  auto say = [&](const char *text) {
-    if (progress)
-      progress(text);
-  };
   if (req.launcherId == 0 || req.gameId == 0)
     return {false, "У игры нет запускаемого лаунчера"};
 
   const u64 tid = titleIdForGame(req.gameId);
 
   // --- inputs
-  say("Загрузка обложки…");
   Bytes icon;
   bool usedCover = false;
-  if (!makeIcon(req.coverUrl, icon, usedCover))
-    return {false, "Не удалось подготовить значок"};
+  {
+    std::vector<std::string> urls = req.iconUrls;
+    urls.push_back(req.coverUrl);
+    if (!makeIcon(urls, icon, usedCover))
+      return {false, "Ярлык не добавлен: нет значка"};
+  }
 
   Bytes loaderMain, loaderNpdm;
   if (!readFile(BRLS_ASSET("forwarder/main"), loaderMain) || !readFile(BRLS_ASSET("forwarder/main.npdm"), loaderNpdm) ||
       loaderMain.empty() || loaderNpdm.empty())
-    return {false, "В этой сборке нет загрузчика ярлыков (forwarder/main). Соберите приложение заново."};
+    return {false, "Ярлык не добавлен: нет загрузчика"};
 
   // --- where the loader finds its target (read by the forwarder at start-up)
   std::string nro = utils::getExecPath();
@@ -264,16 +266,15 @@ Outcome install(const Request &req, const std::function<void(const std::string &
     const std::string cfgPath = Settings::configDir() + name;
     FILE *f = std::fopen(cfgPath.c_str(), "wb");
     if (!f)
-      return {false, "Не удалось записать " + cfgPath};
+      return {false, "Ярлык не добавлен: нет записи на SD"};
     std::string body = nro + "\n" + argv + "\n";
     bool ok = std::fwrite(body.data(), 1, body.size(), f) == body.size();
     ok = (std::fclose(f) == 0) && ok;
     if (!ok)
-      return {false, "Не удалось записать " + cfgPath};
+      return {false, "Ярлык не добавлен: нет записи на SD"};
   }
 
   // --- build the title
-  say("Сборка пакета…");
   PackageInput input;
   input.titleId = tid;
   input.exefsMain = std::move(loaderMain);
@@ -297,11 +298,10 @@ Outcome install(const Request &req, const std::function<void(const std::string &
 
     std::string error;
     if (!buildPackage(input, headerKey, pkg, error))
-      return {false, "Не удалось собрать пакет: " + error};
+      return {false, "Ярлык не добавлен: " + error};
   }
 
   // --- install
-  say("Установка…");
   Result rc = ncmInitialize();
   if (R_FAILED(rc))
     return {false, failure("ncm", rc)};
@@ -374,8 +374,7 @@ Outcome install(const Request &req, const std::function<void(const std::string &
     return {false, failure("запись в ns", rc)};
 
   brls::Logger::info("forwarder: installed {:016X} for game {} (launcher {})", tid, req.gameId, req.launcherId);
-  return {true, std::string("Ярлык «") + req.name + "» добавлен на главный экран" +
-                  (usedCover ? "." : " (значок приложения: обложку скачать не удалось).")};
+  return {true, "Ярлык добавлен"};
 }
 
 #endif // __SWITCH__

@@ -31,6 +31,7 @@ public:
 
     initStreamSettings();
 
+    this->gamepadMappingModeCell->setVisibility(brls::Visibility::GONE);
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadMappingDialog());
       return true;

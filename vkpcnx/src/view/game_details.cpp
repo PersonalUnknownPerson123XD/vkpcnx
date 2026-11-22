@@ -32,21 +32,13 @@ brls::Label *makeLabel(const std::string &text, float fontSize, bool dim = false
   return label;
 }
 
-void showMessage(const std::string &text) {
-  auto *dialog = new brls::Dialog(text);
-  dialog->addButton("OK", [] {});
-  dialog->setCancelable(true);
-  dialog->open();
-}
-
 std::atomic<bool> installing{false};
 
 void startInstall(const GameCard::Game &game) {
   if (installing.exchange(true)) {
-    brls::Application::notify("Ярлык уже устанавливается");
     return;
   }
-  brls::Application::notify("Устанавливаем ярлык…");
+  brls::Application::notify("Ярлык устанавливается…");
 
   forwarder::Request request;
   request.gameId = game.id;
@@ -64,40 +56,20 @@ void startInstall(const GameCard::Game &game) {
     forwarder::Outcome outcome = forwarder::install(request, nullptr);
     brls::sync([outcome] {
       installing = false;
-      if (outcome.ok)
-        showMessage(
-          outcome.message +
-          "\n\nЗакройте vkpcnx: значок игры появится на главном экране Switch. Если он при запуске "
-          "сразу вылетает с ошибкой, в системе нет сигпатчей (Atmosphère + sigpatches)."
-        );
-      else
-        showMessage(outcome.message);
+      brls::Application::notify(outcome.message);
     });
   });
 }
 
+// sysMMC is the only case worth a question: the shortcut is an unsigned title
 void confirmInstall(const GameCard::Game &game) {
-  std::string text;
-  switch (forwarder::detectMmc()) {
-  case forwarder::MmcKind::EmuMmc:
-    text = "Ярлык ставится на главный экран как отдельное приложение (маленький неподписанный пакет). "
-           "Вы работаете в emuMMC — это рекомендуемый вариант.\n\nДля запуска нужны сигпатчи "
-           "(Atmosphère + sigpatches).";
-    break;
-  case forwarder::MmcKind::SysMmc:
-    text = "ВНИМАНИЕ: вы работаете в sysMMC (настоящая системная память). Ярлык — это неподписанный "
-           "пакет, установленный в системную NAND; это рискованно (проблемы с системой, возможен бан "
-           "при выходе в сеть). Ярлыки лучше ставить только в emuMMC.\n\nУстановить всё равно?";
-    break;
-  default:
-    text = "Ярлык ставится на главный экран как отдельное неподписанное приложение. Определить, emuMMC "
-           "это или sysMMC, не удалось — ярлыки лучше ставить только в emuMMC.\n\nДля запуска нужны "
-           "сигпатчи (Atmosphère + sigpatches). Установить?";
-    break;
+  if (forwarder::detectMmc() != forwarder::MmcKind::SysMmc) {
+    startInstall(game);
+    return;
   }
-  auto *dialog = new brls::Dialog(text);
-  dialog->addButton("Отмена", [] {});
-  dialog->addButton("Установить", [game] { startInstall(game); });
+  auto *dialog = new brls::Dialog("sysMMC: ярлык — неподписанное приложение. Ставить?");
+  dialog->addButton("Нет", [] {});
+  dialog->addButton("Да", [game] { startInstall(game); });
   dialog->setCancelable(true);
   dialog->open();
 }
@@ -141,10 +113,11 @@ GameDetailsContent::GameDetailsContent(const GameCard::Game &game) {
   top->addView(info);
   this->addView(top);
 
-  std::string description = game.description.empty() ? "Описание недоступно." : game.description;
-  auto *descr = makeLabel(clip(description, 900), 18);
-  descr->setMarginTop(18);
-  this->addView(descr);
+  if (!game.description.empty()) {
+    auto *descr = makeLabel(clip(game.description, 500), 17);
+    descr->setMarginTop(16);
+    this->addView(descr);
+  }
 
   if (!game.pictureUrl.empty())
     coverRequest = vkpcnx::utils::loadScaledImage(
