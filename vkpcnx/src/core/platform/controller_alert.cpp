@@ -52,33 +52,85 @@ constexpr HidNpadIdType kNpads[] = {
 std::atomic<unsigned> generation{0};
 std::mutex alertMutex;
 
-// Applies the pattern to every controller that has a HOME LED. hidsysSetNotificationLedPattern
-// fails for pads without one (left Joy-Con, third-party pads); that's expected
-// and ignored. hidsysInitialize/Exit are refcounted, so this is safe to call
-// from any thread without keeping the service open between notifications.
+// Apply the HOME-button notification LED pattern to every UniquePad we can
+// see. The Switch Lite body is HidsysUniquePadType_Embedded; GetUniquePadsFromNpad
+// on Handheld can miss it, so we also walk hidsysGetUniquePadIds. Both
+// SetNotificationLedPattern and SetNotificationLedPatternWithTimeout are tried
+// (the latter needs [9.0.0+] pad firmware). Pads without a HOME LED fail
+// those calls; results are logged with an "LED:" prefix so a Lite test can
+// tell whether the visible LED is this API or the power/charge LED.
+// hidsysInitialize/Exit are refcounted, so this is safe from any thread.
+const char *padTypeName(HidsysUniquePadType type) {
+  switch (type) {
+  case HidsysUniquePadType_Embedded:
+    return "Embedded";
+  case HidsysUniquePadType_FullKeyController:
+    return "FullKey";
+  case HidsysUniquePadType_RightController:
+    return "Right";
+  case HidsysUniquePadType_LeftController:
+    return "Left";
+  case HidsysUniquePadType_DebugPadController:
+    return "DebugPad";
+  default:
+    return "Unknown";
+  }
+}
+
+bool lightPad(const HidsysNotificationLedPattern &pattern, HidsysUniquePadId pad, const char *via) {
+  HidsysUniquePadType type{};
+  Result typeRc = hidsysGetUniquePadType(pad, &type);
+  // 3 s timeout: long enough for the 4-blink alert, ignored if the API fails
+  Result timeoutRc =
+    hidsysSetNotificationLedPatternWithTimeout(&pattern, pad, 3000000000ULL);
+  Result setRc = hidsysSetNotificationLedPattern(&pattern, pad);
+  const char *name = R_SUCCEEDED(typeRc) ? padTypeName(type) : "?";
+  brls::Logger::info(
+    "LED: via={} pad={:#x} type_rc={:#x} type={} ({}) timeout_rc={:#x} set_rc={:#x}",
+    via, static_cast<unsigned long long>(pad.id), typeRc, static_cast<unsigned>(type), name, timeoutRc,
+    setRc
+  );
+  return R_SUCCEEDED(timeoutRc) || R_SUCCEEDED(setRc);
+}
+
 void applyPattern(const HidsysNotificationLedPattern &pattern) {
   Result rc = hidsysInitialize();
   if (R_FAILED(rc)) {
-    brls::Logger::warning("ControllerAlert: hidsysInitialize failed: 0x{:x}", rc);
+    brls::Logger::warning("LED: hidsysInitialize failed rc={:#x}", rc);
     return;
   }
   int lit = 0;
   for (HidNpadIdType npad : kNpads) {
-    HidsysUniquePadId pads[2]; // a dual Joy-Con npad has two
+    HidsysUniquePadId pads[8];
     s32 count = 0;
-    if (R_FAILED(hidsysGetUniquePadsFromNpad(npad, pads, 2, &count)))
+    Result nrc = hidsysGetUniquePadsFromNpad(npad, pads, 8, &count);
+    if (count > 0 || npad == HidNpadIdType_Handheld || npad == HidNpadIdType_No1)
+      brls::Logger::info(
+        "LED: GetUniquePadsFromNpad id={} rc={:#x} count={}", static_cast<int>(npad), nrc, count
+      );
+    if (R_FAILED(nrc) || count <= 0)
       continue;
     for (s32 i = 0; i < count; i++) {
-      if (R_SUCCEEDED(hidsysSetNotificationLedPattern(&pattern, pads[i])))
+      if (lightPad(pattern, pads[i], "npad"))
         lit++;
     }
   }
-  brls::Logger::debug("ControllerAlert: LED pattern set on {} controller(s)", lit);
+  HidsysUniquePadId all[16];
+  s32 total = 0;
+  Result arc = hidsysGetUniquePadIds(all, 16, &total);
+  brls::Logger::info("LED: GetUniquePadIds rc={:#x} count={}", arc, total);
+  if (R_SUCCEEDED(arc)) {
+    for (s32 i = 0; i < total && i < 16; i++) {
+      if (lightPad(pattern, all[i], "all"))
+        lit++;
+    }
+  }
+  brls::Logger::info("LED: pattern accepted on {} attempt(s)", lit);
   hidsysExit();
 }
 
-// Vibration handles of every connected pad. Switch Lite has no Joy-Con and
-// no HOME LED; it rumble-only, via HidNpadIdType_Handheld + NpadHandheld.
+// Vibration handles of every connected pad. Switch Lite rumble goes through
+// HidNpadIdType_Handheld + NpadHandheld (confirmed working on the user's Lite).
 bool addVibration(std::vector<HidVibrationDeviceHandle> &out, HidNpadIdType npad,
                   HidNpadStyleTag style, int count) {
   HidVibrationDeviceHandle handles[2];

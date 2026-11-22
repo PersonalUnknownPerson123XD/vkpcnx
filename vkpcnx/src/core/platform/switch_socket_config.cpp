@@ -21,6 +21,10 @@ Result __wrap_socketInitialize(const SocketInitConfig *config) {
   // 8 * (0x40000 * 2 + 0x2400 + 0x80000) ≈ 8.3 MB of the app heap
   cfg.udp_rx_buf_size = std::max<u32>(cfg.udp_rx_buf_size, 0x80000);
   cfg.sb_efficiency = std::max<u32>(cfg.sb_efficiency, 8);
+  // Two WebRTC PeerConnections + the game-server websocket + HTTP can burst
+  // more concurrent bsd:u IPC than the previous 12 sessions; juice then
+  // ended up in _socketGetFd with a null handle (far=0) at ICE connected.
+  cfg.num_bsd_sessions = std::max<u32>(cfg.num_bsd_sessions, 24);
   return __real_socketInitialize(&cfg);
 }
 

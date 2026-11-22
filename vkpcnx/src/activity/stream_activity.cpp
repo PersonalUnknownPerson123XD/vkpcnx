@@ -1906,10 +1906,15 @@ void StreamActivity::tickProfileTimer() {
   int64_t seconds = profileBalance_.secondsAtStart - elapsed;
   if (seconds < 0)
     seconds = 0;
-  maybeAlertTimeLeft(seconds);
-  if (seconds == lastTimeLeftSeconds_ && timer->getVisibility() == brls::Visibility::VISIBLE)
-    return; // same displayed second: don't relayout the label every frame
-  lastTimeLeftSeconds_ = seconds;
+  // Wait until the stream is actually playing so we don't rumble/LED/toast
+  // in the middle of ICE (see applyProfileCountdown). lastTimeLeft stays
+  // large until then so the crossing is still detected.
+  if (sessionStartedAt_) {
+    maybeAlertTimeLeft(seconds);
+    if (seconds == lastTimeLeftSeconds_ && timer->getVisibility() == brls::Visibility::VISIBLE)
+      return; // same displayed second: don't relayout the label every frame
+    lastTimeLeftSeconds_ = seconds;
+  }
   int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
   char buf[32];
   if (h > 0)
@@ -1940,11 +1945,14 @@ void StreamActivity::applyProfileCountdown() {
     timer->setVisibility(brls::Visibility::GONE);
     return;
   }
-  // Alert first (lastTimeLeft still starts large) so a session that opens
-  // already under 15/5/1 min still fires, then latch the snapshot.
+  // Show the countdown immediately, but do not latch lastTimeLeft or fire
+  // the 15/5/1 min rumble/LED yet. harica14 crashed in _socketGetFd on the
+  // juice/ws threads at "ICE connected" when the 15-min alert was started
+  // during WebRTC setup (10 min already left). tickProfileTimer alerts
+  // once sessionStartedAt_ is set (State::Streaming), while lastTimeLeft
+  // is still large, so a session that opens already under a threshold
+  // still warns — after the sockets are up.
   int64_t seconds = snap.secondsAtStart;
-  maybeAlertTimeLeft(seconds);
-  lastTimeLeftSeconds_ = seconds;
   // Start the on-screen countdown from this snapshot; collectSessionMetrics
   // subtracts elapsed from the same value for the overlay
   int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;

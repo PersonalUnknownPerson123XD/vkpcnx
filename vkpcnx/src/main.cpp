@@ -242,10 +242,10 @@ int main(int argc, char *argv[]) {
     const bool isApp = at == AppletType_Application || at == AppletType_SystemApplication;
     if (isApp || vkpcnx::utils::shortcutSession()) {
       brls::Logger::info(
-        "exit: Application/shortcut — exitToHome (type {}) so we don't return to the forwarder",
+        "exit: Application/shortcut — official SelfExit (type {}) so we don't return to the forwarder",
         static_cast<int>(at)
       );
-      vkpcnx::diag::shutdownLogging();
+      vkpcnx::diag::flushLogging();
       vkpcnx::utils::exitToHome();
     }
   }

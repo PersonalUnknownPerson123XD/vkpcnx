@@ -1,11 +1,14 @@
 #include "core/utils/lifecycle.hpp"
 
 #include "activity/main_activity.hpp"
+#include "core/diag/log.hpp"
 
 #include <borealis.hpp>
+#include <cstdlib>
 
 #ifdef __SWITCH__
 #include <switch.h>
+extern "C" u32 __nx_applet_exit_mode;
 #else
 #include <unistd.h>
 #endif
@@ -69,37 +72,19 @@ void relaunch() {
 
 [[noreturn]] void exitToHome() {
 #ifdef __SWITCH__
-  brls::Logger::info("exitToHome: ISelfController::Exit + svcExitProcess");
-  Result rc = 1;
-  Handle proc = envGetOwnProcessHandle();
-  // appletOE is Application / SystemApplication (HOME shortcut, title override)
-  const char *names[] = {"appletOE", "appletAE"};
-  for (const char *name : names) {
-    Service applet{};
-    if (R_FAILED(smGetService(&applet, name)))
-      continue;
-    Service proxy{}, self{};
-    const u64 reserved = 0;
-    rc = serviceDispatchIn(
-      &applet, 0, reserved, .in_send_pid = true, .in_num_handles = 1, .in_handles = {proc},
-      .out_num_objects = 1, .out_objects = &proxy
-    );
-    if (R_SUCCEEDED(rc)) {
-      rc = serviceDispatch(&proxy, 1, .out_num_objects = 1, .out_objects = &self);
-      if (R_SUCCEEDED(rc)) {
-        rc = serviceDispatch(&self, 0); // ISelfController::Exit
-        serviceClose(&self);
-      }
-      serviceClose(&proxy);
-    }
-    serviceClose(&applet);
-    if (R_SUCCEEDED(rc))
-      break;
-  }
-  if (R_SUCCEEDED(rc))
-    for (int i = 0; i < 100; i++)
-      svcSleepThread(100000000ULL);
-  svcExitProcess();
+  // Official Application exit for an NRO launched as a HOME-shortcut
+  // Application: set __nx_applet_exit_mode=1 so libnx appletExit issues
+  // ISelfController::Exit on the existing self-controller session, then
+  // std::exit so userAppExit runs (socketExit + appletUnlockExit).
+  // Opening a second appletOE proxy and calling Exit while LockExit was
+  // still held, then svcExitProcess, is what produced the Atmosphere error
+  // screen after "Log: clean exit". Do not return into the forwarder (it
+  // unmaps this NRO's .text). appletRequestExitToSelf is LibraryApplet-only.
+  brls::Logger::info("exitToHome: official SelfExit (__nx_applet_exit_mode=1, UnlockExit in userAppExit)");
+  vkpcnx::diag::flushLogging();
+  __nx_applet_exit_mode = 1;
+  vkpcnx::diag::shutdownLogging();
+  std::exit(EXIT_SUCCESS);
   __builtin_unreachable();
 #else
   std::exit(EXIT_SUCCESS);
