@@ -89,6 +89,10 @@ private:
   bool caps_ = false;
   bool showFocus_ = false;
   int focus_ = 0;
+  // Switch-style focus frame: glides from the previous key (ease-out, 0.14 s)
+  bool focusGlideOn_ = false;
+  brls::Rect focusFrom_{}, focusTo_{};
+  std::chrono::steady_clock::time_point focusSince_{};
   std::map<int, Mod> mods_; // modifier key index → state
   std::map<int, std::chrono::steady_clock::time_point> latchedAt_;
   std::map<int, Press> presses_;           // source → held key

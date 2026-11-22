@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 #include <iterator>
 
 using namespace vkpcnx;
@@ -154,6 +158,136 @@ void text(NVGcontext *vg, int font, float size, NVGcolor color, float cx, float 
   nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
   nvgFillColor(vg, color);
   nvgText(vg, cx, cy, s, nullptr);
+}
+
+void strokeRounded(NVGcontext *vg, float x, float y, float w, float h, float radius, NVGcolor color, float width) {
+  nvgBeginPath(vg);
+  nvgRoundedRect(vg, x, y, w, h, radius);
+  nvgStrokeColor(vg, color);
+  nvgStrokeWidth(vg, width);
+  nvgStroke(vg);
+}
+
+NVGcolor hexRgb(uint32_t rgb, int a = 255) {
+  return nvgRGBA((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, a);
+}
+
+NVGcolor fade(NVGcolor c, float k) {
+  c.a *= k;
+  return c;
+}
+
+// Horizon's Switch overlay palette (horizon-theme/src/switch.rs)
+struct SwitchPalette {
+  bool dark = true;
+  uint32_t page = 0x2b2b2b, plate = 0x404040, plateSoft = 0x353535, surface = 0x323232,
+    rule = 0x4d4d4d, ink = 0xf5f5f5, inkSoft = 0xd6d6d6, muted = 0xb4b4b4, accent = 0x00c3e3,
+    onAccent = 0x0b1b20;
+};
+
+SwitchPalette switchPalette() {
+  // Follow the console's appearance; the rest of the app may stay dark.
+  bool dark = brls::Application::getThemeVariant() != brls::ThemeVariant::LIGHT;
+#ifdef __SWITCH__
+  // The app forces a dark UI; the keyboard follows the console's own appearance.
+  {
+    ColorSetId id{};
+    if (R_SUCCEEDED(setsysGetColorSetId(&id)))
+      dark = id != ColorSetId_Light;
+  }
+#endif
+  if (dark)
+    return {};
+  return SwitchPalette{
+    false, 0xebebeb, 0xdcdcdc, 0xf5f5f5, 0xffffff, 0xcfcfcf, 0x2d2d2d, 0x464646, 0x5a5a5a,
+    0x0062a8, 0xffffff
+  };
+}
+
+constexpr float kRadiusKey = 8.f;
+constexpr float kRadiusPanel = 14.f;
+constexpr float kFrame = 3.f;
+constexpr float kFrameGap = 2.f;
+constexpr float kFocusMoveSecs = 0.14f;
+constexpr float kGlowPeriodSecs = 1.6f;
+
+float easeOut(float t) {
+  t = std::clamp(t, 0.f, 1.f);
+  float u = 1.f - t;
+  return 1.f - u * u * u;
+}
+
+float glow(float secs) {
+  return 0.675f + 0.325f * std::sin(secs / kGlowPeriodSecs * 6.2831853f);
+}
+
+float nowSecs() {
+  static const auto start = std::chrono::steady_clock::now();
+  return std::chrono::duration<float>(std::chrono::steady_clock::now() - start).count();
+}
+
+void focusFrame(NVGcontext *vg, const SwitchPalette &p, const brls::Rect &r) {
+  const float x = r.getMinX(), y = r.getMinY(), w = r.getWidth(), h = r.getHeight();
+  const NVGcolor accent = hexRgb(p.accent);
+  const float g = glow(nowSecs());
+  const float step = 1.f;
+  const int rings = std::max(1, int(std::round(kFrame)));
+  for (int i = 0; i < rings; i++) {
+    float o = kFrameGap + i * step;
+    strokeRounded(vg, x - o, y - o, w + 2 * o, h + 2 * o, kRadiusKey + o, accent, 1.25f);
+  }
+  for (int i = 0; i < 4; i++) {
+    float o = kFrameGap + kFrame + i * 1.5f;
+    float k = g * 0.35f * (1.f - i / 4.f);
+    strokeRounded(vg, x - o, y - o, w + 2 * o, h + 2 * o, kRadiusKey + o, fade(accent, k), 1.5f);
+  }
+}
+
+// Round (or pill) button glyph; returns its width.
+float hintGlyph(NVGcontext *vg, int font, const SwitchPalette &p, float x, float y, float size, const char *label) {
+  nvgFontFaceId(vg, font);
+  nvgFontSize(vg, 12);
+  float bounds[4];
+  nvgTextBounds(vg, 0, 0, label, nullptr, bounds);
+  float tw = bounds[2] - bounds[0];
+  float w = std::max(size, tw + 12);
+  fillRounded(vg, brls::Rect(x, y, w, size), size / 2, hexRgb(p.plate));
+  strokeRounded(vg, x, y, w, size, size / 2, hexRgb(p.muted), 1.25f);
+  text(vg, font, 12, hexRgb(p.ink), x + w / 2, y + size / 2, label);
+  return w;
+}
+
+struct Hint {
+  const char *glyph;
+  const char *label;
+};
+
+void hintRow(NVGcontext *vg, int font, const SwitchPalette &p, float cx, float y, const Hint *hints, int n) {
+  constexpr float size = 22, gap = 6, between = 16;
+  nvgFontFaceId(vg, font);
+  nvgFontSize(vg, 12);
+  float widths[16][2]{};
+  float total = between * std::max(0, n - 1);
+  for (int i = 0; i < n; i++) {
+    float bounds[4];
+    nvgTextBounds(vg, 0, 0, hints[i].glyph, nullptr, bounds);
+    widths[i][0] = std::max(size, (bounds[2] - bounds[0]) + 12);
+    nvgFontSize(vg, 13);
+    nvgTextBounds(vg, 0, 0, hints[i].label, nullptr, bounds);
+    widths[i][1] = bounds[2] - bounds[0];
+    nvgFontSize(vg, 12);
+    total += widths[i][0] + gap + widths[i][1];
+  }
+  float x = std::round(cx - total / 2);
+  for (int i = 0; i < n; i++) {
+    hintGlyph(vg, font, p, x, y, size, hints[i].glyph);
+    nvgFontFaceId(vg, font);
+    nvgFontSize(vg, 13);
+    nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+    nvgFillColor(vg, hexRgb(p.inkSoft));
+    nvgText(vg, x + widths[i][0] + gap, y + size / 2, hints[i].label, nullptr);
+    x += widths[i][0] + gap + widths[i][1] + between;
+  }
 }
 
 } // namespace
@@ -475,60 +609,63 @@ void OnscreenKeyboard::draw(
   brls::Style style,
   brls::FrameContext *ctx
 ) {
-  const NVGcolor panel = rgba(20, 20, 19, 225);
-  const NVGcolor keyChar = rgba(95, 94, 90, 235);
-  const NVGcolor keyMod = rgba(68, 68, 65, 235);
-  const NVGcolor keyPressed = rgba(160, 159, 152, 255);
-  const NVGcolor accent = rgba(55, 138, 221, 255);
-  const NVGcolor focusRing = rgba(133, 183, 235, 255);
-  const NVGcolor label = rgba(241, 239, 232, 255);
-  const NVGcolor hint = rgba(180, 178, 169, 255);
+  (void)style;
+  (void)ctx;
+  const auto pal = switchPalette();
   const int regular = brls::Application::getDefaultFont();
   const int material = brls::Application::getFont(brls::FONT_MATERIAL_ICONS);
+  const NVGcolor keyFill = pal.dark ? hexRgb(pal.plate) : hexRgb(pal.surface);
+  const NVGcolor ink = hexRgb(pal.ink);
+  const NVGcolor accent = hexRgb(pal.accent);
+  const NVGcolor onAccent = hexRgb(pal.onAccent);
 
-  nvgBeginPath(vg);
-  nvgRect(vg, x, y, width, height);
-  nvgFillColor(vg, panel);
-  nvgFill(vg);
+  // Soft drop shadow, then a floating rounded plate (not a full-width bar)
+  const float inset = 8;
+  brls::Rect plate(x + inset, y + 4, width - 2 * inset, height - 4);
+  fillRounded(vg, brls::Rect(plate.getMinX(), plate.getMinY() + 4, plate.getWidth(), plate.getHeight()), kRadiusPanel, nvgRGBA(0, 0, 0, 46));
+  fillRounded(vg, plate, kRadiusPanel, hexRgb(pal.page, 248));
 
-  // Strip: layer pill, gamepad hints, dock / close buttons
+  // Strip: layer pill, round button hints, dock / close
   float stripMid = y + kStripH / 2;
   const char *layer = fnLayer_ ? "Fn" : russian_ ? "RU" : "EN";
-  brls::Rect pill(x + kPadX, stripMid - 12, 40, 24);
-  fillRounded(vg, pill, 4, fnLayer_ || russian_ ? accent : keyChar);
-  text(vg, regular, 15, label, pill.getMidX(), pill.getMidY(), layer);
+  brls::Rect pill(x + kPadX + inset, stripMid - 11, 44, 22);
+  bool layerOn = fnLayer_ || russian_;
+  fillRounded(vg, pill, 11, layerOn ? accent : keyFill);
+  if (!layerOn)
+    strokeRounded(vg, pill.getMinX(), pill.getMinY(), pill.getWidth(), pill.getHeight(), 11, hexRgb(pal.rule), 1);
+  text(vg, regular, 13, layerOn ? onAccent : ink, pill.getMidX(), pill.getMidY(), layer);
 
   auto dock = stripButtonRect(StripButton::Dock);
-  float hintsLeft = pill.getMaxX() + 14;
+  auto close = stripButtonRect(StripButton::Close);
+  Hint hints[] = {
+    {"A", "Нажать"}, {"Y", "Стереть"}, {"X", "Shift"}, {"B", "Пробел"},
+    {"L", "Язык"},   {"R", "Fn"},      {"+", "Enter"}, {"–", "Закрыть"},
+  };
+  const float hintsTop = y + (kStripH - 22) / 2;
+  const float hintsLeft = pill.getMaxX() + 10;
+  const float hintsRight = dock.getMinX() - kGap;
   nvgSave(vg);
-  nvgScissor(vg, hintsLeft, y, std::max(0.0f, dock.getMinX() - kGap - hintsLeft), kStripH);
-  nvgFontFaceId(vg, regular);
-  nvgFontSize(vg, 15);
-  nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-  nvgFillColor(vg, hint);
-  nvgText(
-    vg,
-    hintsLeft,
-    stripMid,
-    "\uE0E0 нажать   \uE0E1 стереть   \uE0E2 Shift   \uE0E3 пробел   \uE0E4 язык   "
-    "\uE0E5 Fn   \uE0EF Enter   \uE0F0 закрыть   \uE105 мышь   \uE0E6 \uE0E7 клик",
-    nullptr
-  );
+  nvgIntersectScissor(vg, hintsLeft, y, std::max(0.f, hintsRight - hintsLeft), kStripH);
+  hintRow(vg, regular, pal, (hintsLeft + hintsRight) / 2, hintsTop, hints, 8);
   nvgRestore(vg);
 
-  fillRounded(vg, dock, 4, keyChar);
-  text(vg, material, 22, label, dock.getMidX(), dock.getMidY(), "\uE8D5"); // swap_vert
-  auto close = stripButtonRect(StripButton::Close);
-  fillRounded(vg, close, 4, keyChar);
-  text(vg, material, 22, label, close.getMidX(), close.getMidY(), "\uE5CD"); // close
+  auto stripBtn = [&](const brls::Rect &r, const char *icon) {
+    fillRounded(vg, r, r.getHeight() / 2, keyFill);
+    strokeRounded(vg, r.getMinX(), r.getMinY(), r.getWidth(), r.getHeight(), r.getHeight() / 2, hexRgb(pal.muted), 1.25f);
+    text(vg, material, 18, ink, r.getMidX(), r.getMidY(), icon);
+  };
+  stripBtn(dock, "\uE8D5");  // swap_vert
+  stripBtn(close, "\uE5CD"); // close
 
-  // Keys
+  brls::Rect focusTarget{};
+  bool haveFocus = false;
+
   for (int i = 0; i < kKeyCount; i++) {
     const auto &k = kKeys[i];
     auto r = keyRect(i);
     std::string s = labelFor(i);
     bool blank = k.kind == Kind::Char && fnLayer_ && !k.fnDik;
-    bool fnSwapped = fnLayer_ && k.fnLabel; // Fn label replaces the icon
+    bool fnSwapped = fnLayer_ && k.fnLabel;
 
     bool active = false, locked = false;
     if (k.kind == Kind::Mod) {
@@ -543,41 +680,76 @@ void OnscreenKeyboard::draw(
       active = fnLayer_;
     }
 
-    NVGcolor bg = k.kind == Kind::Char || fnSwapped ? keyChar : keyMod;
-    if (active)
+    bool focused = showFocus_ && i == focus_;
+    bool pressed = pressCount_.count(i) > 0;
+    NVGcolor bg = keyFill;
+    NVGcolor fg = ink;
+    if (k.kind == Kind::Key && k.dik == kDikEnter) {
       bg = accent;
-    if (pressCount_.count(i))
-      bg = keyPressed;
+      fg = onAccent;
+    } else if (active) {
+      bg = fade(accent, 0.28f);
+      fg = ink;
+    } else if (pressed) {
+      bg = pal.dark ? hexRgb(pal.rule) : hexRgb(pal.plateSoft);
+    } else if (focused) {
+      bg = pal.dark ? hexRgb(pal.rule) : hexRgb(pal.plateSoft);
+    }
     if (blank)
-      bg.a = 0.25f;
-    fillRounded(vg, r, 5, bg);
+      bg.a *= 0.25f;
+    fillRounded(vg, r, kRadiusKey, bg);
 
     if (locked) {
       brls::Rect bar(r.getMidX() - 8, r.getMaxY() - 7, 16, 3);
-      fillRounded(vg, bar, 1.5f, label);
+      fillRounded(vg, bar, 1.5f, fg);
     }
 
     if (k.icon && !fnSwapped)
-      text(vg, material, 24, label, r.getMidX(), r.getMidY(), k.icon);
+      text(vg, material, 22, fg, r.getMidX(), r.getMidY(), k.icon);
     else if (!s.empty())
       text(
-        vg,
-        regular,
-        k.kind == Kind::Char && !fnLayer_ ? 22 : 16,
-        label,
-        r.getMidX(),
-        r.getMidY(),
+        vg, regular, k.kind == Kind::Char && !fnLayer_ ? 22 : 15, fg, r.getMidX(), r.getMidY(),
         s.c_str()
       );
 
-    if (showFocus_ && i == focus_) {
-      nvgBeginPath(vg);
-      nvgRoundedRect(
-        vg, r.getMinX() - 2, r.getMinY() - 2, r.getWidth() + 4, r.getHeight() + 4, 7
-      );
-      nvgStrokeColor(vg, focusRing);
-      nvgStrokeWidth(vg, 3);
-      nvgStroke(vg);
+    if (focused) {
+      focusTarget = r;
+      haveFocus = true;
     }
   }
+
+  if (haveFocus) {
+    auto now = std::chrono::steady_clock::now();
+    if (!focusGlideOn_) {
+      focusFrom_ = focusTo_ = focusTarget;
+      focusSince_ = now;
+      focusGlideOn_ = true;
+    } else if (focusTarget.getMinX() != focusTo_.getMinX() ||
+               focusTarget.getMinY() != focusTo_.getMinY() ||
+               focusTarget.getWidth() != focusTo_.getWidth() ||
+               focusTarget.getHeight() != focusTo_.getHeight()) {
+      float t = easeOut(std::chrono::duration<float>(now - focusSince_).count() / kFocusMoveSecs);
+      auto lerp = [t](float a, float b) { return a + (b - a) * t; };
+      focusFrom_ = brls::Rect(
+        lerp(focusFrom_.getMinX(), focusTo_.getMinX()),
+        lerp(focusFrom_.getMinY(), focusTo_.getMinY()),
+        lerp(focusFrom_.getWidth(), focusTo_.getWidth()),
+        lerp(focusFrom_.getHeight(), focusTo_.getHeight())
+      );
+      focusTo_ = focusTarget;
+      focusSince_ = now;
+    }
+    float t = easeOut(std::chrono::duration<float>(now - focusSince_).count() / kFocusMoveSecs);
+    auto lerp = [t](float a, float b) { return a + (b - a) * t; };
+    brls::Rect cur(
+      lerp(focusFrom_.getMinX(), focusTo_.getMinX()),
+      lerp(focusFrom_.getMinY(), focusTo_.getMinY()),
+      lerp(focusFrom_.getWidth(), focusTo_.getWidth()),
+      lerp(focusFrom_.getHeight(), focusTo_.getHeight())
+    );
+    focusFrame(vg, pal, cur);
+  } else {
+    focusGlideOn_ = false;
+  }
 }
+
