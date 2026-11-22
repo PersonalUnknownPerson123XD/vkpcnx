@@ -63,6 +63,16 @@ void StreamOverlay::renderInfo() {
   setIfChanged(this->lastPing, std::to_string(metrics.rtt) + "мс", [this](auto &v) {
     this->pingLabel->setText(v);
   });
+  setIfChanged(
+    this->lastFps,
+    fmt::format("{:.0f} / {:.0f}", metrics.renderFps, metrics.decodeFps),
+    [this](auto &v) { this->fpsLabel->setText(v); }
+  );
+  setIfChanged(
+    this->lastBitrate,
+    fmt::format("{:.2f} Мбит/с", metrics.bitrateMbit),
+    [this](auto &v) { this->bitrateLabel->setText(v); }
+  );
 
   // Short stats: time left
   std::string timeLeftStr =
@@ -80,6 +90,21 @@ void StreamOverlay::renderInfo() {
   setIfChanged(this->lastStatsFullPing, std::to_string(metrics.rtt) + "мс", [this](auto &v) {
     this->statsFullPing->setValue(v);
   });
+  setIfChanged(
+    this->lastStatsFullFps,
+    fmt::format("{:.0f} / {:.0f}", metrics.renderFps, metrics.decodeFps),
+    [this](auto &v) { this->statsFullFps->setValue(v); }
+  );
+  setIfChanged(
+    this->lastStatsFullBitrate,
+    fmt::format("{:.2f} Мбит/с", metrics.bitrateMbit),
+    [this](auto &v) { this->statsFullBitrate->setValue(v); }
+  );
+  setIfChanged(
+    this->lastStatsFullRtp,
+    fmt::format("{} / {} (+{} восст.)", metrics.rtpLost, metrics.rtpReceived + metrics.rtpLost, metrics.rtpRecovered),
+    [this](auto &v) { this->statsFullRtp->setValue(v); }
+  );
   setIfChanged(this->lastStatsFullServerName, metrics.gameServerName, [this](auto &v) {
     this->statsFullServerName->setValue(v);
   });

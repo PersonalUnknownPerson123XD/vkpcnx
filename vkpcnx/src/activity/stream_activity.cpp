@@ -874,6 +874,8 @@ void StreamActivity::onKey(brls::KeyState key) {
 }
 
 void StreamActivity::pollInputs() {
+  presentedFps_ = static_cast<float>(video->renderedFps());
+  refreshRates();
   if (hudVisible_)
     updateHud();
   tickProfileTimer();
@@ -1640,9 +1642,42 @@ void StreamActivity::tapClick() {
   tapClickReleaseAt_ = std::chrono::steady_clock::now() + kTapDragWindow;
 }
 
+void StreamActivity::refreshRates() const {
+  if (!session_ || !session_->isStreaming()) {
+    ratesPrev_.reset();
+    decodeFps_ = bitrateMbit_ = renderFps_ = 0;
+    rtpLostWindow_ = rtpReceivedWindow_ = rtpRecoveredWindow_ = 0;
+    return;
+  }
+  auto now = std::chrono::steady_clock::now();
+  auto s = session_->stats();
+  if (!ratesPrev_) {
+    ratesPrev_ = s;
+    ratesAt_ = now;
+    return;
+  }
+  double seconds = std::chrono::duration<double>(now - ratesAt_).count();
+  if (seconds < 0.5)
+    return; // keep the last window until we have a useful interval
+  auto delta = [](uint64_t cur, uint64_t prev) { return cur >= prev ? cur - prev : cur; };
+  const auto &p = *ratesPrev_;
+  decodeFps_ = static_cast<float>(delta(s.decoder.framesDecoded, p.decoder.framesDecoded) / seconds);
+  bitrateMbit_ = static_cast<float>(delta(s.videoBytes, p.videoBytes) * 8 / seconds / 1e6);
+  rtpReceivedWindow_ = delta(s.rtpPacketsReceived, p.rtpPacketsReceived);
+  rtpLostWindow_ = delta(s.rtpPacketsLost, p.rtpPacketsLost);
+  rtpRecoveredWindow_ = delta(s.rtpPacketsRecovered, p.rtpPacketsRecovered);
+  // Presented fps comes from StreamView (frames actually uploaded). If that's
+  // still 0 after a second of decoded frames, show the decode rate instead of
+  // a stuck 0 — the picture is on screen either way.
+  renderFps_ = presentedFps_ > 0.05f ? presentedFps_ : decodeFps_;
+  ratesPrev_ = s;
+  ratesAt_ = now;
+}
+
 void StreamActivity::updateHud() {
   if (!session_)
     return;
+  refreshRates();
   auto s = session_->stats();
   char buf[256];
   char rtt[32];
@@ -1653,17 +1688,20 @@ void StreamActivity::updateHud() {
   std::snprintf(
     buf,
     sizeof buf,
-    "%.0ffps rtt:%s input_rtt:%.1fms decode:%.1fms err:%llu dropped:%llu video:%s/%s",
-    video->renderedFps(),
+    "fps %.0f/%.0f  %.2f Mbit/s  rtt:%s  lost:%llu/%llu  decode:%.1fms  err:%llu  video:%s/%s",
+    renderFps_,
+    decodeFps_,
+    bitrateMbit_,
     rtt,
-    s.inputRttMs,
+    (unsigned long long)rtpLostWindow_,
+    (unsigned long long)(rtpReceivedWindow_ + rtpLostWindow_),
     s.decoder.avgDecodeMs,
     (unsigned long long)s.decoder.decodeErrors,
-    (unsigned long long)s.decoder.framesDropped,
     s.decoder.codecName.c_str(),
     s.decoder.hwAccelName ? s.decoder.hwAccelName->c_str() : "software"
   );
-  hud->setText(buf);
+  if (hud->getFullText() != buf)
+    hud->setText(buf);
 }
 
 void StreamActivity::logStats() {
@@ -1693,8 +1731,8 @@ void StreamActivity::logStats() {
     "Stats: render {:.1f} fps, decode {:.1f} fps, {:.2f} Mbit/s, rtt {}, input rtt {:.1f} ms, "
     "decode {:.1f} ms, rtp lost {}/{} (+{} recovered), decode errors +{}, dropped +{}, "
     "keyframe req +{}, audio buffered {}, {}x{} {}/{}",
-    video->renderedFps(),
-    frames / seconds,
+    renderFps_,
+    decodeFps_ > 0 ? decodeFps_ : frames / seconds,
     bytes * 8 / seconds / 1e6,
     s.rtt ? std::to_string(s.rtt->count()) + " ms" : std::string("-"),
     s.inputRttMs,
@@ -1920,6 +1958,13 @@ vkpcnx::StreamOverlay::SessionMetrics StreamActivity::collectSessionMetrics() co
     m.videoCodecName = s.decoder.codecName;
     m.hwDecoderName = s.decoder.hwAccelName;
   }
+  refreshRates();
+  m.renderFps = renderFps_;
+  m.decodeFps = decodeFps_;
+  m.bitrateMbit = bitrateMbit_;
+  m.rtpLost = rtpLostWindow_;
+  m.rtpReceived = rtpReceivedWindow_;
+  m.rtpRecovered = rtpRecoveredWindow_;
 
   if (sessionStartedAt_)
     m.sessionSecondsElapsed =

@@ -95,6 +95,10 @@ public:
   struct SessionMetrics {
     std::string gameServerName;
     int rtt;
+    float renderFps = 0;
+    float decodeFps = 0;
+    float bitrateMbit = 0;
+    uint64_t rtpLost = 0, rtpReceived = 0, rtpRecovered = 0;
     bool timeLeftUnlimited;
     int sessionSecondsLeft;
     int sessionSecondsElapsed;
@@ -164,6 +168,8 @@ private:
   BRLS_BIND(brls::Label, statsHeader, "stream_overlay/stats_header");
   BRLS_BIND(brls::Box, statsShortBox, "stream_overlay/stats_short");
   BRLS_BIND(brls::Label, pingLabel, "stream_overlay/ping");
+  BRLS_BIND(brls::Label, fpsLabel, "stream_overlay/fps");
+  BRLS_BIND(brls::Label, bitrateLabel, "stream_overlay/bitrate");
   BRLS_BIND(brls::Label, serverNameLabel, "stream_overlay/server_name");
   BRLS_BIND(brls::Label, showMoreLabel, "stream_overlay/show_more");
 
@@ -173,6 +179,9 @@ private:
   BRLS_BIND(brls::Box, statsFullBox, "stream_overlay/stats_full");
   BRLS_BIND(vkpcnx::StripedListRow, statsFullPing, "stream_overlay/stats_full/ping");
   BRLS_BIND(vkpcnx::StripedListRow, statsFullServerName, "stream_overlay/stats_full/server_name");
+  BRLS_BIND(vkpcnx::StripedListRow, statsFullFps, "stream_overlay/stats_full/fps");
+  BRLS_BIND(vkpcnx::StripedListRow, statsFullBitrate, "stream_overlay/stats_full/bitrate");
+  BRLS_BIND(vkpcnx::StripedListRow, statsFullRtp, "stream_overlay/stats_full/rtp");
   BRLS_BIND(
     vkpcnx::StripedListRow, sessionTimeElapsed, "stream_overlay/stats_full/session_time_elapsed"
   );
@@ -210,9 +219,14 @@ private:
   std::string lastClock;
   std::string lastBatteryPct;
   std::string lastPing;
+  std::string lastFps;
+  std::string lastBitrate;
   std::string lastServerName;
   std::string lastStatsFullPing;
   std::string lastStatsFullServerName;
+  std::string lastStatsFullFps;
+  std::string lastStatsFullBitrate;
+  std::string lastStatsFullRtp;
   std::string lastSessionTimeElapsed;
   std::string lastStatsFullTimeLeft;
   std::string lastDroppedFrames;

@@ -23,6 +23,16 @@
         <brls:Label id="stream_overlay/ping" singleLine="true"/>
       </brls:Box>
 
+      <brls:Box justifyContent="spaceBetween" marginBottom="20" alignItems="center">
+        <brls:Label text="FPS" alpha="0.75" fontSize="15" marginRight="20" shrink="0"/>
+        <brls:Label id="stream_overlay/fps" singleLine="true"/>
+      </brls:Box>
+
+      <brls:Box justifyContent="spaceBetween" marginBottom="20" alignItems="center">
+        <brls:Label text="Битрейт" alpha="0.75" fontSize="15" marginRight="20" shrink="0"/>
+        <brls:Label id="stream_overlay/bitrate" singleLine="true"/>
+      </brls:Box>
+
       <brls:Box justifyContent="spaceBetween" alignItems="center">
         <brls:Label text="Сервер" alpha="0.75" fontSize="15" marginRight="20" shrink="0"/>
         <brls:Label id="stream_overlay/server_name" singleLine="true"/>
@@ -38,6 +48,9 @@
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/server_name" title="Имя сервера"/>
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/session_time_elapsed" title="Длительность сессии"/>
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/session_time_left" title="Осталось времени"/>
+      <vkpcnx:StripedListRow id="stream_overlay/stats_full/fps" title="Кадры (показ / декод)"/>
+      <vkpcnx:StripedListRow id="stream_overlay/stats_full/bitrate" title="Битрейт"/>
+      <vkpcnx:StripedListRow id="stream_overlay/stats_full/rtp" title="Потери RTP"/>
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/dropped_frames" title="Потеряно кадров"/>
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/decode_errs" title="Ошибки декодера"/>
       <vkpcnx:StripedListRow id="stream_overlay/stats_full/avg_decode_ms" title="Сред. время кадра"/>

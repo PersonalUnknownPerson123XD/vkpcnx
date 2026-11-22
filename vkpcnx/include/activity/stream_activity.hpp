@@ -108,6 +108,12 @@ private:
   static constexpr auto kStatsLogInterval = std::chrono::seconds(2);
   std::chrono::steady_clock::time_point statsLoggedAt_{};
   std::optional<vkpcnx::stream::StreamSession::Stats> lastLoggedStats_;
+  // 1 s window used by the HUD, the overlay and the log: decode fps, bitrate, RTP
+  mutable std::chrono::steady_clock::time_point ratesAt_{};
+  mutable std::optional<vkpcnx::stream::StreamSession::Stats> ratesPrev_;
+  mutable float decodeFps_ = 0, bitrateMbit_ = 0, renderFps_ = 0, presentedFps_ = 0;
+  mutable uint64_t rtpLostWindow_ = 0, rtpReceivedWindow_ = 0, rtpRecoveredWindow_ = 0;
+  void refreshRates() const;
   void setHudVisible(bool visible);
   // On-screen keyboard button: session-only toggle (not persisted), off by
   // default; dragged around with a finger in pollTouch()
