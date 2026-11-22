@@ -77,12 +77,32 @@ void applyPattern(const HidsysNotificationLedPattern &pattern) {
   hidsysExit();
 }
 
-// Vibration handles of every connected pad, both halves of a Joy-Con pair
+// Vibration handles of every connected pad. Switch Lite has no Joy-Con and
+// no HOME LED; it rumble-only, via HidNpadIdType_Handheld + NpadHandheld.
+bool addVibration(std::vector<HidVibrationDeviceHandle> &out, HidNpadIdType npad,
+                  HidNpadStyleTag style, int count) {
+  HidVibrationDeviceHandle handles[2];
+  Result rc = hidInitializeVibrationDevices(handles, count, npad, style);
+  if (R_FAILED(rc)) {
+    if (count == 2) // Lite sometimes exposes a single handle
+      return addVibration(out, npad, style, 1);
+    return false;
+  }
+  out.insert(out.end(), handles, handles + count);
+  return true;
+}
+
 std::vector<HidVibrationDeviceHandle> vibrationDevices() {
   std::vector<HidVibrationDeviceHandle> out;
+  hidPermitVibration(true);
+  // Always try the handheld slot first (Switch Lite / Joy-Cons attached).
+  // Style set can read as 0 if this runs off the input thread, so don't
+  // require hidGetNpadStyleSet to be non-zero.
+  addVibration(out, HidNpadIdType_Handheld, HidNpadStyleTag_NpadHandheld, 2);
   for (HidNpadIdType npad : kNpads) {
+    if (npad == HidNpadIdType_Handheld && !out.empty())
+      continue; // already added
     u32 styles = hidGetNpadStyleSet(npad);
-    // One style per call; single Joy-Cons have one motor, the rest two
     HidNpadStyleTag style;
     int count = 2;
     if (styles & HidNpadStyleTag_NpadFullKey)
@@ -97,9 +117,7 @@ std::vector<HidVibrationDeviceHandle> vibrationDevices() {
       style = HidNpadStyleTag_NpadJoyRight, count = 1;
     else
       continue;
-    HidVibrationDeviceHandle handles[2];
-    if (R_SUCCEEDED(hidInitializeVibrationDevices(handles, count, npad, style)))
-      out.insert(out.end(), handles, handles + count);
+    addVibration(out, npad, style, count);
   }
   return out;
 }
@@ -128,6 +146,12 @@ HidsysNotificationLedPattern blinkPattern() {
 
 void runAlert(unsigned gen) {
   auto devices = vibrationDevices();
+  brls::Logger::info("ControllerAlert: rumble on {} device(s)", devices.size());
+  if (devices.empty())
+    brls::Logger::warning(
+      "ControllerAlert: no vibration devices (handheld style 0x{:x})",
+      hidGetNpadStyleSet(HidNpadIdType_Handheld)
+    );
   auto pattern = blinkPattern();
   auto start = std::chrono::steady_clock::now();
   using std::chrono::milliseconds;

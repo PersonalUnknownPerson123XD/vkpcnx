@@ -118,6 +118,7 @@ elseif (PLATFORM_SWITCH)
         nx m
     )
     list(APPEND MAIN_SRC ${BOREALIS_LIBRARY}/lib/platforms/switch/switch_wrapper.c)
+    list(APPEND MAIN_SRC ${CMAKE_SOURCE_DIR}/vkpcnx/src/core/saltynx_api.c)
 endif ()
 
 # libcurl (https client)

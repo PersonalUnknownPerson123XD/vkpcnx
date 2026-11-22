@@ -32,8 +32,8 @@ public:
     initStreamSettings();
 
     this->gamepadMappingModeCell->setVisibility(brls::Visibility::GONE);
-    this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
-      this->openDialog(new GamepadMappingDialog());
+    this->gamepadMappingModeCell->registerClickAction([](auto &&) {
+      openControllerProfileDialog(0, "");
       return true;
     });
     this->controllerProfileCell->registerClickAction([](auto &&) {

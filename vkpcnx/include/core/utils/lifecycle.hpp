@@ -38,6 +38,11 @@ void finishScreen(std::function<void()> then = nullptr);
 // Shortcut session that failed or was given up: the catalog takes over
 void fallBackToCatalog();
 
+// Application / HOME-shortcut: ask the system to close this title and
+// svcExitProcess, so we never return to an (old) forwarder that unmaps the NRO
+// while leftover threads may still run. Does not return.
+[[noreturn]] void exitToHome();
+
 #ifdef VKPCNX_HAS_DEBUG_KEYS
 class DebugKeyListener {
   termios oldTerm{};

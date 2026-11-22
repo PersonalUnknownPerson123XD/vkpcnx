@@ -38,6 +38,20 @@ public:
     cv_.notify_one();
   }
 
+  // Join queued workers, then the reaper thread. After this, no worker is
+  // still running NRO code (or we timed out and logged it).
+  void shutdown() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (stopped_)
+        return;
+      stopped_ = true;
+    }
+    cv_.notify_all();
+    if (worker_.joinable())
+      worker_.join();
+  }
+
 private:
   struct Entry {
     std::thread thread;
@@ -52,6 +66,8 @@ private:
     std::unique_lock<std::mutex> lock(mutex_);
     for (;;) {
       cv_.wait(lock, [this] {
+        if (stopped_ && entries_.empty())
+          return true;
         for (auto &e : entries_)
           if (e.finished())
             return true;
@@ -68,6 +84,8 @@ private:
       for (auto &e : finished)
         e.thread.join();
       lock.lock();
+      if (stopped_ && entries_.empty())
+        return;
     }
   }
 
@@ -75,6 +93,7 @@ private:
   std::condition_variable cv_;
   std::list<Entry> entries_;
   std::thread worker_;
+  bool stopped_ = false;
 };
 
 } // namespace
@@ -90,11 +109,15 @@ void runDetached(std::function<void()> fn) {
 
 void detach(std::thread thread) { Reaper::instance().add(std::move(thread), nullptr); }
 
+void shutdownDetached() { Reaper::instance().shutdown(); }
+
 #else
 
 void runDetached(std::function<void()> fn) { std::thread(std::move(fn)).detach(); }
 
 void detach(std::thread thread) { thread.detach(); }
+
+void shutdownDetached() {}
 
 #endif
 

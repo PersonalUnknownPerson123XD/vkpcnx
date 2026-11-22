@@ -16,9 +16,11 @@
 #include "core/diag/log.hpp"
 #include "core/diag/report.hpp"
 #include "core/http.hpp"
+#include "core/nx_fps.hpp"
 #include "core/platform/switch_heap.hpp"
 #include "core/settings.hpp"
 #include "core/utils/lifecycle.hpp"
+#include "core/utils/thread.hpp"
 #include "view/animated_webp.hpp"
 #include "view/debug_report.hpp"
 #include "view/fill_scrolling_frame.hpp"
@@ -28,6 +30,10 @@
 #include "view/striped_list.hpp"
 
 #include <glad/glad.h>
+
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
 
 namespace {
 // Percent-decoding for --name= / --cover= (the forwarder writes them url-encoded
@@ -61,6 +67,7 @@ int main(int argc, char *argv[]) {
   vkpcnx::diag::installCrashHandlers();
 
   vkpcnx::utils::setExecPath(argv[0]);
+  brls::Logger::info("exec path: {}", argv[0] ? argv[0] : "(null)");
 #ifdef VKPCNX_HAS_DEBUG_KEYS
   new vkpcnx::utils::DebugKeyListener();
 #endif
@@ -209,11 +216,41 @@ int main(int argc, char *argv[]) {
     });
 
   brls::Logger::info("entering main loop");
-  while (brls::Application::mainLoop())
+  vkpcnx::nxfps::init();
+  while (brls::Application::mainLoop()) {
     vkpcnx::diag::heartbeat();
+    vkpcnx::nxfps::tick();
+  }
   brls::Logger::info("main loop exited");
+  vkpcnx::diag::flushLogging();
 
+  brls::Logger::info("exit: joining detached workers");
+  vkpcnx::diag::flushLogging();
+  vkpcnx::utils::shutdownDetached();
+
+  brls::Logger::info("exit: shutting down HTTP");
+  vkpcnx::diag::flushLogging();
   Http::shutdown();
+
+  brls::Logger::info("exit: shutting down NX-FPS");
+  vkpcnx::diag::flushLogging();
+  vkpcnx::nxfps::shutdown();
+
+#ifdef __SWITCH__
+  {
+    AppletType at = appletGetAppletType();
+    const bool isApp = at == AppletType_Application || at == AppletType_SystemApplication;
+    if (isApp || vkpcnx::utils::shortcutSession()) {
+      brls::Logger::info(
+        "exit: Application/shortcut — exitToHome (type {}) so we don't return to the forwarder",
+        static_cast<int>(at)
+      );
+      vkpcnx::diag::shutdownLogging();
+      vkpcnx::utils::exitToHome();
+    }
+  }
+#endif
+
   vkpcnx::diag::shutdownLogging();
   return EXIT_SUCCESS;
 }

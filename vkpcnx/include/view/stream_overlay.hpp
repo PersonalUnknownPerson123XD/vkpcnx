@@ -51,7 +51,7 @@ public:
     // switch that a per-game profile overrides only confused
     this->gamepadMappingModeCell->setVisibility(brls::Visibility::GONE);
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
-      this->openDialog(new GamepadMappingDialog());
+      openControllerProfileDialog(this->gameId, this->gameName);
       return true;
     });
     this->controllerProfileCell->registerClickAction([this](auto &&) {
@@ -170,6 +170,7 @@ private:
   BRLS_BIND(brls::Label, pingLabel, "stream_overlay/ping");
   BRLS_BIND(brls::Label, fpsLabel, "stream_overlay/fps");
   BRLS_BIND(brls::Label, bitrateLabel, "stream_overlay/bitrate");
+  BRLS_BIND(brls::Label, timeLeftLabel, "stream_overlay/time_left");
   BRLS_BIND(brls::Label, serverNameLabel, "stream_overlay/server_name");
   BRLS_BIND(brls::Label, showMoreLabel, "stream_overlay/show_more");
 
@@ -221,6 +222,7 @@ private:
   std::string lastPing;
   std::string lastFps;
   std::string lastBitrate;
+  std::string lastTimeLeft;
   std::string lastServerName;
   std::string lastStatsFullPing;
   std::string lastStatsFullServerName;

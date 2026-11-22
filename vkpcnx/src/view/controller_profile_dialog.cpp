@@ -145,6 +145,10 @@ ControllerProfileContent::ControllerProfileContent(int gameId, const std::string
   this->setAxis(brls::Axis::COLUMN);
   this->setGrow(1);
   this->setFocusable(true);
+  // The only child is a GONE scrolling frame (DialogContent leftover); without
+  // an explicit height yoga collapses this to 0 and only "Готово" is visible.
+  this->setMinHeight(620);
+  this->setHeight(620);
 
   if (gameId > 0) {
     if (!controls::loadGameOverride(gameId, profile))
@@ -758,12 +762,14 @@ int ControllerProfileContent::nearestFocus(int cur, int dx, int dy) const {
 }
 
 void openControllerProfileDialog(int gameId, const std::string &gameName) {
+  brls::Logger::info("ControllerProfile: opening editor gameId={} name={}", gameId, gameName);
   auto *content = new ControllerProfileContent(gameId, gameName);
   auto *dialog = new brls::Dialog(content);
   dialog->addButton("Готово", [] {});
   dialog->setCancelable(true);
   dialog->getAppletFrame()->setWidth(920);
   dialog->getAppletFrame()->setHeightPercentage(92.0f);
+  dialog->getAppletFrame()->setMinHeight(620);
   dialog->setLastFocusedView(content);
   dialog->open();
 }

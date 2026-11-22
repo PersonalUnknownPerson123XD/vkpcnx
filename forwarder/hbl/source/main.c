@@ -415,6 +415,13 @@ void loadNro(void)
 
     memcpy((u8*)armGetTls() + 0x100, g_savedTls, 0x100);
 
+    // The forwarded NRO returned and did not ask to chain-load anything.
+    // Leave the process *before* unmapping its .text: leftover threads (or an
+    // older forwarder that falls through to hbmenu / diagAbort) would
+    // otherwise crash after the NRO already logged a clean exit.
+    if (g_nroSize > 0 && g_nextNroPath[0] == '\0' && g_forwardedOnce)
+        selfExit();
+
     if (g_nroSize > 0)
     {
         // Unmap previous NRO.

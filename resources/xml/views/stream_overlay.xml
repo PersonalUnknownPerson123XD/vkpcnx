@@ -33,6 +33,11 @@
         <brls:Label id="stream_overlay/bitrate" singleLine="true"/>
       </brls:Box>
 
+      <brls:Box justifyContent="spaceBetween" marginBottom="20" alignItems="center">
+        <brls:Label text="Осталось" alpha="0.75" fontSize="15" marginRight="20" shrink="0"/>
+        <brls:Label id="stream_overlay/time_left" singleLine="true"/>
+      </brls:Box>
+
       <brls:Box justifyContent="spaceBetween" alignItems="center">
         <brls:Label text="Сервер" alpha="0.75" fontSize="15" marginRight="20" shrink="0"/>
         <brls:Label id="stream_overlay/server_name" singleLine="true"/>

@@ -211,12 +211,15 @@ private:
 
   // Last (soonest-expiring) value from any SC_*_TIME_LEFT source; the merge
   // across sources happens in GameServerClient itself.
-  int64_t lastTimeLeftSeconds_ = 0;
+  // Start above every warning threshold so the first finite reading can fire
+  // 15/5/1-minute alerts. (Zero made `last > warning && seconds <= warning` fail.)
+  int64_t lastTimeLeftSeconds_ = 7LL * 24 * 3600;
   // Profile minutes at session start; overlay/timer count down from this
   AccountInfo::BalanceSnapshot profileBalance_;
   bool profileBalanceLogged_ = false;
   void applyProfileCountdown();
   void tickProfileTimer();
+  void maybeAlertTimeLeft(int64_t seconds);
 
 
   // Set once, the first time the session reaches State::Streaming; not reset

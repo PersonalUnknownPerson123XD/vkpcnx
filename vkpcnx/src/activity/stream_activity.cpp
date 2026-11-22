@@ -401,9 +401,10 @@ StreamActivity::~StreamActivity() {
     brls::cancelDelay(hudTimer_);
   session_.reset();
   platform::clearControllerAlert();
-  // The server settles the minutes balance when the session ends; the menus
-  // below show it, so pull a fresh copy shortly after
-  brls::delay(2000, [] { AccountInfo::instance().fetchAsync(); });
+  // Don't post a delayed fetch after quit (shortcut / Application exit): the
+  // callback can run during teardown. Catalog returns refresh on their own.
+  if (!leaving_)
+    brls::delay(2000, [] { AccountInfo::instance().fetchAsync(); });
 }
 
 StreamSession::Config StreamActivity::buildConfig() const {
@@ -497,13 +498,17 @@ void StreamActivity::onContentAvailable() {
   setupInput();
   if (session_)
     session_->start(buildConfig());
-  // A shortcut launch never went through the catalog, so nobody has asked
-  // for the account yet; the overlay counts down from minutes_balance
+  // Fetch /users/me on every launch path (catalog and HOME shortcut) so the
+  // overlay can count down from the official minutes_balance. Use a cached
+  // snapshot immediately when we already have one, then refresh.
   if (!playgroundMode_) {
+    brls::Logger::info(
+      "Stream: requesting /users/me for remaining time (cached={})",
+      AccountInfo::instance().get().has_value()
+    );
     if (AccountInfo::instance().get())
       applyProfileCountdown();
-    else
-      AccountInfo::instance().fetchAsync();
+    AccountInfo::instance().fetchAsync();
   }
 }
 
@@ -597,15 +602,12 @@ void StreamActivity::setupSession() {
       applyProfileCountdown();
       return;
     }
+    if (profileBalance_.ready)
+      return; // profile countdown owns the timer and the 15/5/1 min alerts
+    maybeAlertTimeLeft(seconds);
     lastTimeLeftSeconds_ = seconds;
-    for (int64_t warning : kTimeLeftAlertsSeconds) {
-      if (lastTimeLeftSeconds_ > warning && seconds <= warning) {
-        brls::Logger::info("Stream: {} s of play time left, alerting controllers", seconds);
-        brls::Application::notify(timeLeftWarningText(warning));
-        platform::alertControllers();
-        break;
-      }
-    }
+    // (assignment used to be *before* the warning loop, which made
+    //  lastTimeLeftSeconds_ > warning && seconds <= warning impossible)
     int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
     char buf[32];
     if (h > 0)
@@ -1876,6 +1878,23 @@ void StreamActivity::placeOsk() {
     placeOskButton(left, root->getY() + kbH + kMargin);
 }
 
+void StreamActivity::maybeAlertTimeLeft(int64_t seconds) {
+  if (seconds >= kUnlimitedTimeLeftThresholdSeconds)
+    return;
+  for (int64_t warning : kTimeLeftAlertsSeconds) {
+    if (lastTimeLeftSeconds_ > warning && seconds <= warning) {
+      brls::Logger::info("Stream: {} s of play time left, alerting controllers", seconds);
+      // Notify on the UI thread so the toast actually appears (session
+      // callbacks may arrive off-thread). Rumble the handheld (Switch Lite).
+      brls::sync([warning] {
+        brls::Application::notify(timeLeftWarningText(warning));
+        platform::alertControllers();
+      });
+      break;
+    }
+  }
+}
+
 void StreamActivity::tickProfileTimer() {
   if (!profileBalance_.ready || profileBalance_.unlimited)
     return;
@@ -1887,14 +1906,7 @@ void StreamActivity::tickProfileTimer() {
   int64_t seconds = profileBalance_.secondsAtStart - elapsed;
   if (seconds < 0)
     seconds = 0;
-  for (int64_t warning : kTimeLeftAlertsSeconds) {
-    if (lastTimeLeftSeconds_ > warning && seconds <= warning) {
-      brls::Logger::info("Stream: {} s of play time left, alerting controllers", seconds);
-      brls::Application::notify(timeLeftWarningText(warning));
-      platform::alertControllers();
-      break;
-    }
-  }
+  maybeAlertTimeLeft(seconds);
   if (seconds == lastTimeLeftSeconds_ && timer->getVisibility() == brls::Visibility::VISIBLE)
     return; // same displayed second: don't relayout the label every frame
   lastTimeLeftSeconds_ = seconds;
@@ -1928,10 +1940,13 @@ void StreamActivity::applyProfileCountdown() {
     timer->setVisibility(brls::Visibility::GONE);
     return;
   }
+  // Alert first (lastTimeLeft still starts large) so a session that opens
+  // already under 15/5/1 min still fires, then latch the snapshot.
+  int64_t seconds = snap.secondsAtStart;
+  maybeAlertTimeLeft(seconds);
+  lastTimeLeftSeconds_ = seconds;
   // Start the on-screen countdown from this snapshot; collectSessionMetrics
   // subtracts elapsed from the same value for the overlay
-  lastTimeLeftSeconds_ = snap.secondsAtStart;
-  int64_t seconds = snap.secondsAtStart;
   int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
   char buf[32];
   if (h > 0)

@@ -23,6 +23,8 @@ constexpr size_t kMaxLogBytes = 8 * 1024 * 1024; // past this only warnings/erro
 void initLogging(int argc, char *argv[]);
 // Clean exit: flushes, closes, removes the running marker.
 void shutdownLogging();
+// Write queued lines to disk and fsync, leaving the log open for later steps.
+void flushLogging();
 
 // Name shown in the thread column of the log file (≤ 8 chars read best).
 // Threads that never call it are shown as T1, T2, …

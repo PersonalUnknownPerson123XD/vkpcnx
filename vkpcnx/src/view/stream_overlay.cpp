@@ -8,8 +8,8 @@
 
 namespace vkpcnx {
 std::string StreamOverlay::formatSeconds(int value) {
-  if (value == 0)
-    return "-";
+  if (value <= 0)
+    return "0м 0с";
 
   int hrs = value / (60 * 60);
   int mins = (value / 60) % 60;
@@ -74,11 +74,15 @@ void StreamOverlay::renderInfo() {
     [this](auto &v) { this->bitrateLabel->setText(v); }
   );
 
-  // Short stats: time left
+  // Short + full stats: remaining play time (never blank)
   std::string timeLeftStr =
     metrics.timeLeftUnlimited ? "Неогранич."
-    : metrics.sessionSecondsLeft < 0 ? "—"
+    : metrics.sessionSecondsLeft < 0 ? "…"
                                       : formatSeconds(metrics.sessionSecondsLeft);
+
+  setIfChanged(this->lastTimeLeft, timeLeftStr, [this](auto &v) {
+    this->timeLeftLabel->setText(v);
+  });
 
   setIfChanged(this->lastServerName, metrics.gameServerName, [this](auto &v) {
     this->serverNameLabel->setText(v);

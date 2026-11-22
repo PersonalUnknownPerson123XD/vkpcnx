@@ -40,7 +40,7 @@
 
   <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" alpha="0.25"/>
   <brls:DetailCell id="account_details/gamepad_mapping_mode" title="Раскладка контроллера"/>
-  <brls:DetailCell id="account_details/controller_profile" title="Кнопки и стики (общий профиль)"/>
+  <brls:DetailCell id="account_details/controller_profile" title="Кнопки и стики"/>
   <brls:DetailCell id="account_details/gamepad_pointer" title="Контроллер как мышь"/>
   <brls:DetailCell id="account_details/touchscreen_mode" title="Режим сенсорного экрана" marginBottom="20"/>
   <brls:Button id="account_details/controls_playground" text="Проверить управление" style="default" marginBottom="10"/>

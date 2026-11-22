@@ -466,6 +466,15 @@ void initLogging(int argc, char *argv[]) {
     brls::Logger::error("Log: cannot open {}", state->path);
 }
 
+void flushLogging() {
+  if (!state || state->closed)
+    return;
+  drain();
+  std::lock_guard<std::mutex> writeLock(state->writeMutex);
+  if (state->fd >= 0)
+    osSync(state->fd);
+}
+
 void shutdownLogging() {
   if (!state || state->stop)
     return;

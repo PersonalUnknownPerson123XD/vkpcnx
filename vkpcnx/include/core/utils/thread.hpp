@@ -16,4 +16,8 @@ void runDetached(std::function<void()> fn);
 // thread itself. The reaper blocks joining it, so don't pass long-running threads.
 void detach(std::thread thread);
 
+// Join leftover detached workers (and the reaper itself) before tearing down
+// sockets or returning to a forwarder that unmaps this NRO. Safe to call twice.
+void shutdownDetached();
+
 } // namespace vkpcnx::utils

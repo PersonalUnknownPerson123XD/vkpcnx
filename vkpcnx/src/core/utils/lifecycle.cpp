@@ -66,4 +66,44 @@ void relaunch() {
   execv(execPath().c_str(), args);
 #endif
 }
+
+[[noreturn]] void exitToHome() {
+#ifdef __SWITCH__
+  brls::Logger::info("exitToHome: ISelfController::Exit + svcExitProcess");
+  Result rc = 1;
+  Handle proc = envGetOwnProcessHandle();
+  // appletOE is Application / SystemApplication (HOME shortcut, title override)
+  const char *names[] = {"appletOE", "appletAE"};
+  for (const char *name : names) {
+    Service applet{};
+    if (R_FAILED(smGetService(&applet, name)))
+      continue;
+    Service proxy{}, self{};
+    const u64 reserved = 0;
+    rc = serviceDispatchIn(
+      &applet, 0, reserved, .in_send_pid = true, .in_num_handles = 1, .in_handles = {proc},
+      .out_num_objects = 1, .out_objects = &proxy
+    );
+    if (R_SUCCEEDED(rc)) {
+      rc = serviceDispatch(&proxy, 1, .out_num_objects = 1, .out_objects = &self);
+      if (R_SUCCEEDED(rc)) {
+        rc = serviceDispatch(&self, 0); // ISelfController::Exit
+        serviceClose(&self);
+      }
+      serviceClose(&proxy);
+    }
+    serviceClose(&applet);
+    if (R_SUCCEEDED(rc))
+      break;
+  }
+  if (R_SUCCEEDED(rc))
+    for (int i = 0; i < 100; i++)
+      svcSleepThread(100000000ULL);
+  svcExitProcess();
+  __builtin_unreachable();
+#else
+  std::exit(EXIT_SUCCESS);
+  __builtin_unreachable();
+#endif
+}
 } // namespace vkpcnx::utils
