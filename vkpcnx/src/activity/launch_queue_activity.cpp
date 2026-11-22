@@ -1,4 +1,5 @@
 #include "activity/launch_queue_activity.hpp"
+#include "core/utils/lifecycle.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -37,7 +38,7 @@ void LaunchQueueActivity::onContentAvailable() {
   if (!game.pictureUrl.empty())
     vkpcnx::utils::loadImageFromUrl(this->image, game.pictureUrl);
 
-  delayHandle = brls::delay(1500, [this] {
+  delayHandle = brls::delay(vkpcnx::utils::shortcutSession() ? 300 : 1500, [this] {
     delayHandle = 0;
     this->registerAction(
       "",
@@ -53,7 +54,10 @@ void LaunchQueueActivity::onContentAvailable() {
             } catch (...) {
             }
           });
-          brls::Application::popActivity(brls::TransitionAnimation::FADE);
+          if (vkpcnx::utils::shortcutSession())
+            vkpcnx::utils::finishScreen(); // the shortcut was only for this game: back to HOME
+          else
+            brls::Application::popActivity(brls::TransitionAnimation::FADE);
         });
         dialog->setCancelable(true);
         dialog->open();
@@ -89,7 +93,10 @@ void LaunchQueueActivity::showError(const std::string &message) {
     *alive = false;
     auto *dialog = new brls::Dialog(message);
     dialog->addButton("OK", [] {
-      brls::Application::popActivity(brls::TransitionAnimation::FADE);
+      if (vkpcnx::utils::shortcutSession())
+        vkpcnx::utils::fallBackToCatalog(); // nothing to go back to: show the catalog
+      else
+        brls::Application::popActivity(brls::TransitionAnimation::FADE);
     });
     dialog->setCancelable(false);
     dialog->open();
@@ -228,6 +235,14 @@ void LaunchQueueActivity::initPlaySession(std::shared_ptr<std::atomic<bool>> ali
         return;
       *alive = false;
       auto game = this->game;
+      if (vkpcnx::utils::shortcutSession()) {
+        // The first activity can't be popped: the stream goes on top of this one
+        // and the app quits when the stream ends
+        brls::Application::pushActivity(
+          new StreamActivity(game, playUrl), brls::TransitionAnimation::FADE
+        );
+        return;
+      }
       brls::Application::popActivity(brls::TransitionAnimation::NONE, [game, playUrl] {
         brls::Application::pushActivity(
           new StreamActivity(game, playUrl), brls::TransitionAnimation::FADE

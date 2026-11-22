@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <ctime>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -26,6 +27,16 @@ void setExecPath(const std::string &path);
 // argv[0] as the app was started with (empty before setExecPath)
 std::string getExecPath();
 void relaunch();
+
+// Started from a HOME menu shortcut: the game is the whole session, so the
+// app ends with it (straight back to HOME) instead of showing the catalog.
+void setShortcutSession(bool on);
+bool shortcutSession();
+// Takes the app off the screen the way the session type wants: pops the top
+// activity, or (shortcut session) quits. `then` runs after a pop only.
+void finishScreen(std::function<void()> then = nullptr);
+// Shortcut session that failed or was given up: the catalog takes over
+void fallBackToCatalog();
 
 #ifdef VKPCNX_HAS_DEBUG_KEYS
 class DebugKeyListener {

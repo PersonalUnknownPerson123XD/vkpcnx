@@ -62,7 +62,7 @@ Result deriveHeaderKey(u8 outKey[0x20]);
 bool buildPackage(const PackageInput &in, const u8 headerKey[0x20], Package &out, std::string &error);
 
 // The NACP for the forwarder: `name` in every language slot, no saves, no accounts
-std::vector<u8> buildNacp(const std::string &name, u64 titleId);
+std::vector<u8> buildNacp(const std::string &name, u64 titleId, const std::string &displayVersion = "1.0.0");
 
 } // namespace vkpcnx::forwarder
 #endif

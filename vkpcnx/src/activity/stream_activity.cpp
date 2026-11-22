@@ -1,4 +1,5 @@
 #include "activity/stream_activity.hpp"
+#include "core/utils/lifecycle.hpp"
 #include "core/controller_profile.hpp"
 #include "core/account_info.hpp"
 
@@ -1841,8 +1842,17 @@ vkpcnx::StreamOverlay::SessionMetrics StreamActivity::collectSessionMetrics() co
       )
                          .count());
 
-  m.timeLeftUnlimited = lastTimeLeftSeconds_ >= kUnlimitedTimeLeftThresholdSeconds;
-  m.sessionSecondsLeft = m.timeLeftUnlimited ? 0 : static_cast<int>(lastTimeLeftSeconds_);
+  // The server reports ~10 years for free-minutes accounts as well; the real
+  // balance is minutes_balance from /users/me
+  m.timeLeftUnlimited = false;
+  if (lastTimeLeftSeconds_ >= kUnlimitedTimeLeftThresholdSeconds) {
+    bool unlimited = false;
+    auto left = AccountInfo::instance().secondsLeft(unlimited);
+    m.timeLeftUnlimited = unlimited;
+    m.sessionSecondsLeft = left ? static_cast<int>(std::min<int64_t>(*left, 1 << 30)) : -1;
+  } else {
+    m.sessionSecondsLeft = static_cast<int>(lastTimeLeftSeconds_);
+  }
 
   return m;
 }
@@ -1855,7 +1865,17 @@ void StreamActivity::showErrorAndLeave(const std::string &title, const std::stri
   overlay->setVisibility(brls::Visibility::GONE);
   auto *dialog = new brls::Dialog(title + "\n\n" + message);
   dialog->addButton("OK", [this] {
-    session_->stop([] { brls::Application::popActivity(brls::TransitionAnimation::FADE); });
+    session_->stop([] {
+      if (vkpcnx::utils::shortcutSession()) {
+        // Failed session from a shortcut: the catalog instead of HOME, so the
+        // user can see what went wrong and try again
+        brls::Application::popActivity(brls::TransitionAnimation::NONE, [] {
+          vkpcnx::utils::fallBackToCatalog();
+        });
+        return;
+      }
+      brls::Application::popActivity(brls::TransitionAnimation::FADE);
+    });
   });
   dialog->setCancelable(false);
   dialog->open();
@@ -1873,5 +1893,5 @@ void StreamActivity::leave() {
   statusTitle->setText("Завершение");
   statusText->setText("Отключение от игрового сервера…");
   overlay->setVisibility(brls::Visibility::VISIBLE);
-  session_->stop([] { brls::Application::popActivity(brls::TransitionAnimation::FADE); });
+  session_->stop([] { vkpcnx::utils::finishScreen(); });
 }

@@ -144,6 +144,8 @@ bool encodeIcon(const std::string &imageBytes, Bytes &jpeg) {
 int findSteamAppId(const Request &req) {
   if (req.steamAppId > 0)
     return req.steamAppId;
+  if (req.name.empty())
+    return 0;
   auto response = Http::get(
     "https://store.steampowered.com/api/storesearch/?l=english&cc=us&term=" + Http::urlEncode(req.name)
   );
@@ -163,6 +165,29 @@ int findSteamAppId(const Request &req) {
   return 0;
 }
 
+// "build 26798866": the public branch's build id from steamcmd.net's mirror of
+// the Steam app info. Empty when anything is off; never blocks the install.
+std::string steamBuildVersion(int appId) {
+  if (appId <= 0)
+    return "";
+  try {
+    auto response = Http::get("https://api.steamcmd.net/v1/info/" + std::to_string(appId));
+    if (!response.ok())
+      return "";
+    auto j = nlohmann::json::parse(response.body);
+    if (j.value("status", "") != "success")
+      return "";
+    const auto &pub = j.at("data").at(std::to_string(appId)).at("depots").at("branches").at("public");
+    const std::string build = pub.at("buildid").get<std::string>();
+    if (build.empty() || build.size() > 9) // "build " + id must fit the 16-byte field
+      return "";
+    brls::Logger::info("forwarder: steam build {} for app {}", build, appId);
+    return "build " + build;
+  } catch (const std::exception &) {
+    return "";
+  }
+}
+
 bool tryIcon(const std::string &url, Bytes &jpeg) {
   if (url.empty())
     return false;
@@ -177,8 +202,8 @@ bool tryIcon(const std::string &url, Bytes &jpeg) {
 
 // Icon sources, best first: the Steam library capsule (top-pinned crop), the
 // catalog's vertical poster, the banner (centre-cropped), the app's own icon
-void makeIcon(const Request &req, Bytes &jpeg) {
-  if (int appId = findSteamAppId(req); appId > 0) {
+void makeIcon(const Request &req, int appId, Bytes &jpeg) {
+  if (appId > 0) {
     const std::string base = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" +
                              std::to_string(appId) + "/library_600x900";
     if (tryIcon(base + "_2x.jpg", jpeg) || tryIcon(base + ".jpg", jpeg))
@@ -274,7 +299,8 @@ Outcome install(const Request &req, const std::function<void(const std::string &
 
   // --- inputs
   Bytes icon;
-  makeIcon(req, icon);
+  const int steamAppId = findSteamAppId(req);
+  makeIcon(req, steamAppId, icon);
   if (icon.empty() &&
       (!readFile(BRLS_ASSET("icon/icon.jpg"), icon) || icon.empty() || icon.size() > kMaxIconBytes))
     return {false, "Ярлык не добавлен: нет значка"};
@@ -313,7 +339,7 @@ Outcome install(const Request &req, const std::function<void(const std::string &
   input.titleId = tid;
   input.exefsMain = std::move(loaderMain);
   input.exefsNpdm = std::move(loaderNpdm);
-  input.nacp = buildNacp(req.name.empty() ? "VK Play" : req.name, tid);
+  input.nacp = buildNacp(req.name.empty() ? "VK Play" : req.name, tid, steamBuildVersion(steamAppId));
   input.iconJpeg = std::move(icon);
   input.nroPath = nro;
   input.argv = argv;

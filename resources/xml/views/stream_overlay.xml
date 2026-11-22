@@ -14,8 +14,6 @@
 
   <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" marginBottom="20" alpha="0.5"/>
 
-  <brls:Button id="stream_overlay/controller_profile" text="Кнопки и стики" style="primary" marginBottom="30"/>
-
   <brls:Label id="stream_overlay/stats_header" text="Статистика" fontSize="15" alpha="0.5" marginBottom="20"/>
 
   <brls:Box id="stream_overlay/stats_short" axis="column" marginBottom="20" padding="20" cornerRadius="10" backgroundColor="@theme/brls/backdrop" focusable="true">
@@ -59,6 +57,7 @@
 
   <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" alpha="0.25"/>
   <brls:DetailCell id="stream_overlay/gamepad_mapping_mode" title="Раскладка контроллера"/>
+  <brls:DetailCell id="stream_overlay/controller_profile" title="Кнопки и стики"/>
   <brls:DetailCell id="stream_overlay/gamepad_pointer" title="Контроллер как мышь"/>
   <brls:DetailCell id="stream_overlay/touchscreen_mode" title="Режим сенсорного экрана" marginBottom="20"/>
 

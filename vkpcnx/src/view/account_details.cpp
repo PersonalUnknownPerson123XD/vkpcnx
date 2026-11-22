@@ -9,6 +9,7 @@
 #include "nanovg.h"
 
 #include <charconv>
+#include <cstdlib>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -119,7 +120,13 @@ void AccountDetails::renderAccountDetails(const nlohmann::json &account) {
   auto plan = account.at("plan");
   if (plan.is_null()) {
     this->planName->setText("Нет подписки");
-    this->planDescription->setText("Купите подписку в личном кабинете");
+    std::string text = "Купите подписку в личном кабинете";
+    if (account.contains("minutes_balance") && account["minutes_balance"].is_number()) {
+      int balance = account["minutes_balance"].get<int>();
+      if (balance > 0)
+        text = fmt::format("Бесплатное время: {:02} ч : {:02} м", balance / 60, balance % 60);
+    }
+    this->planDescription->setText(text);
   } else {
     this->planName->setText("Тариф: " + plan.at("name").get<std::string>());
     std::string description;
@@ -135,7 +142,15 @@ void AccountDetails::renderAccountDetails(const nlohmann::json &account) {
       break;
     }
     case 1: {
-      description = "Безлимит";
+      // A free plan is not unlimited: its minutes are in minutes_balance
+      bool freePlan = plan.contains("price") && plan["price"].is_string() &&
+                      std::atof(plan["price"].get<std::string>().c_str()) <= 0.0;
+      if (freePlan && account.contains("minutes_balance") && account["minutes_balance"].is_number()) {
+        int balance = account["minutes_balance"].get<int>();
+        description = fmt::format("Осталось {:02} ч : {:02} м", balance / 60, balance % 60);
+      } else {
+        description = "Безлимит";
+      }
       break;
     }
     case 2: {

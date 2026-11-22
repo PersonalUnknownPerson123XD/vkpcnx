@@ -167,25 +167,24 @@ int main(int argc, char *argv[]) {
     brls::Application::pushActivity(new StreamActivity(game, *playUrl));
   } else if (Settings::instance().has("account")) {
     if (launchGame.launcherId > 0) {
-      // Started from a HOME menu shortcut: the catalog first, the game's queue
-      // on top of it once that is up. Anything that goes wrong leaves the
-      // catalog on screen.
+      // Started from a HOME menu shortcut: straight into the game's queue and
+      // stream, no catalog in between; the app ends with the session
       brls::Logger::info(
         "launch from shortcut: game {} launcher {}", launchGame.id, launchGame.launcherId
       );
       if (launchGame.name.empty())
         launchGame.name = "Игра";
-      brls::Application::pushActivity(new MainActivity(), brls::TransitionAnimation::NONE);
-      brls::delay(800, [launchGame] {
-        try {
-          brls::Application::pushActivity(
-            new LaunchQueueActivity(launchGame), brls::TransitionAnimation::FADE
-          );
-        } catch (const std::exception &e) {
-          brls::Logger::error("launch from shortcut failed: {}", e.what());
-          brls::Application::notify("Не удалось запустить игру");
-        }
-      });
+      vkpcnx::utils::setShortcutSession(true);
+      try {
+        brls::Application::pushActivity(
+          new LaunchQueueActivity(launchGame), brls::TransitionAnimation::NONE
+        );
+      } catch (const std::exception &e) {
+        brls::Logger::error("launch from shortcut failed: {}", e.what());
+        vkpcnx::utils::setShortcutSession(false);
+        brls::Application::pushActivity(new MainActivity(), brls::TransitionAnimation::NONE);
+        brls::Application::notify("Не удалось запустить игру");
+      }
     } else {
       brls::Application::pushActivity(new MainActivity());
     }

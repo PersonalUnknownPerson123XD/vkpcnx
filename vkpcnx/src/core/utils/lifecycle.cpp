@@ -1,5 +1,7 @@
 #include "core/utils/lifecycle.hpp"
 
+#include "activity/main_activity.hpp"
+
 #include <borealis.hpp>
 
 #ifdef __SWITCH__
@@ -19,6 +21,28 @@ std::string &execPath() {
 
 void setExecPath(const std::string &path) { execPath() = path; }
 std::string getExecPath() { return execPath(); }
+
+namespace {
+bool g_shortcutSession = false;
+}
+void setShortcutSession(bool on) { g_shortcutSession = on; }
+bool shortcutSession() { return g_shortcutSession; }
+
+void finishScreen(std::function<void()> then) {
+  if (g_shortcutSession) {
+    brls::Logger::info("shortcut session over: quitting");
+    brls::Application::quit();
+    return;
+  }
+  brls::Application::popActivity(
+    brls::TransitionAnimation::FADE, then ? std::move(then) : std::function<void()>([] {})
+  );
+}
+
+void fallBackToCatalog() {
+  g_shortcutSession = false;
+  brls::Application::pushActivity(new MainActivity(), brls::TransitionAnimation::FADE);
+}
 
 void relaunch() {
 #ifdef __SWITCH__

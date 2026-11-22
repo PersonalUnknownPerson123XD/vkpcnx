@@ -1,4 +1,5 @@
 #include "core/account_info.hpp"
+#include <cstdlib>
 #include "core/utils/thread.hpp"
 #include "core/vkpcapi.hpp"
 
@@ -17,6 +18,18 @@ bool AccountInfo::apply(const nlohmann::json &me) {
     return false;
   }
   this->cached = me;
+  this->fetchedAt = std::chrono::steady_clock::now();
+  {
+    // What the plan/minutes logic works from (no tokens in here)
+    auto plan = me.contains("plan") ? me["plan"] : nlohmann::json();
+    brls::Logger::info(
+      "AccountInfo: plan={} plan_type={} price={} minutes_balance={}",
+      plan.is_object() ? plan.value("name", std::string("?")) : std::string("none"),
+      plan.is_object() && plan.contains("plan_type") ? plan["plan_type"].dump() : "-",
+      plan.is_object() && plan.contains("price") ? plan["price"].dump() : "-",
+      me.contains("minutes_balance") ? me["minutes_balance"].dump() : "-"
+    );
+  }
   this->onUpdated.fire(me);
   return true;
 }
@@ -53,3 +66,26 @@ void AccountInfo::fetchAsync() {
 }
 
 void AccountInfo::clear() { this->cached = std::nullopt; }
+
+std::optional<int64_t> AccountInfo::secondsLeft(bool &unlimited) const {
+  unlimited = false;
+  if (!cached)
+    return std::nullopt;
+  const auto &me = *cached;
+  auto plan = me.contains("plan") ? me["plan"] : nlohmann::json();
+  // An unlimited plan is a paid one (plan_type 1). The free minutes live in
+  // minutes_balance whatever the plan says.
+  const bool freePlan = plan.is_object() && plan.contains("price") && plan["price"].is_string() &&
+                        std::atof(plan["price"].get<std::string>().c_str()) <= 0.0;
+  if (plan.is_object() && plan.value("plan_type", -1) == 1 && !freePlan) {
+    unlimited = true;
+    return std::nullopt;
+  }
+  if (!me.contains("minutes_balance") || !me["minutes_balance"].is_number())
+    return std::nullopt;
+  int64_t seconds = me["minutes_balance"].get<int64_t>() * 60;
+  seconds -= std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::steady_clock::now() - fetchedAt
+  ).count();
+  return std::max<int64_t>(seconds, 0);
+}

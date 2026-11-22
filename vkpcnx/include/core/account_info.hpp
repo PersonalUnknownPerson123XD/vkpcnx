@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <borealis.hpp>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -15,6 +16,11 @@ public:
   void fetchAsync();
   void clear();
 
+  // Play time left according to /users/me as of now: minutes_balance minus the
+  // time since it was fetched. nullopt: no account yet, or an unlimited paid plan
+  // (the caller then shows "unlimited"); `unlimited` tells the two apart.
+  std::optional<int64_t> secondsLeft(bool &unlimited) const;
+
   brls::Event<const nlohmann::json &> &updated() { return onUpdated; }
 
 private:
@@ -22,6 +28,7 @@ private:
   bool apply(const nlohmann::json &me);
 
   std::optional<nlohmann::json> cached;
+  std::chrono::steady_clock::time_point fetchedAt{};
   std::atomic<bool> inFlight{false};
   brls::Event<const nlohmann::json &> onUpdated;
 };

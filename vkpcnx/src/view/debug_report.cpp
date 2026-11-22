@@ -70,6 +70,11 @@ void offerReportAfterUncleanExit() {
   if (!prev.unclean)
     return;
   diag::dismissPreviousRun();
+  // A plain unclean exit is mostly the console closing the app (HOME menu,
+  // sleep, power): not worth a prompt. Only an actual crash gets one; the
+  // next log's header still says the previous run ended abnormally.
+  if (!prev.crashed)
+    return;
   std::string reason = prev.crashed ? "after crash" : "after unclean exit";
   auto *dialog = new brls::Dialog(
     std::string(prev.crashed ? "При прошлом запуске приложение аварийно завершилось."

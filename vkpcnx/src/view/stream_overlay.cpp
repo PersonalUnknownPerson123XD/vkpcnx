@@ -66,7 +66,9 @@ void StreamOverlay::renderInfo() {
 
   // Short stats: time left
   std::string timeLeftStr =
-    metrics.timeLeftUnlimited ? "Неогранич." : formatSeconds(metrics.sessionSecondsLeft);
+    metrics.timeLeftUnlimited ? "Неогранич."
+    : metrics.sessionSecondsLeft < 0 ? "—"
+                                      : formatSeconds(metrics.sessionSecondsLeft);
 
   setIfChanged(this->lastServerName, metrics.gameServerName, [this](auto &v) {
     this->serverNameLabel->setText(v);

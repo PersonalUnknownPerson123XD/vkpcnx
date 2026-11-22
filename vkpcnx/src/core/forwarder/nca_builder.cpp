@@ -532,7 +532,7 @@ Result deriveHeaderKey(u8 outKey[0x20]) {
   return splCryptoGenerateAesKey(kek, kHeaderKeySrc + 0x10, outKey + 0x10);
 }
 
-std::vector<u8> buildNacp(const std::string &name, u64 titleId) {
+std::vector<u8> buildNacp(const std::string &name, u64 titleId, const std::string &displayVersion) {
   Bytes raw(sizeof(NacpStruct), 0);
   static_assert(sizeof(NacpStruct) == 0x4000);
 
@@ -553,7 +553,7 @@ std::vector<u8> buildNacp(const std::string &name, u64 titleId) {
   nacp->data_loss_confirmation = 0;
   nacp->play_log_policy = 0;
   nacp->presence_group_id = titleId;
-  std::snprintf(nacp->display_version, sizeof(nacp->display_version), "1.0.0");
+  std::snprintf(nacp->display_version, sizeof(nacp->display_version), "%s", displayVersion.empty() ? "1.0.0" : displayVersion.c_str());
   nacp->add_on_content_base_id = titleId ^ 0x1000;
   nacp->save_data_owner_id = titleId;
   nacp->logo_type = 2;                  // "Nintendo" logo type (no logo section is shipped)
