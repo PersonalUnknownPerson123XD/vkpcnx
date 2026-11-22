@@ -18,6 +18,7 @@
 #include "core/http.hpp"
 #include "core/nx_fps.hpp"
 #include "core/platform/switch_heap.hpp"
+#include "core/platform/switch_socket_config.hpp"
 #include "core/settings.hpp"
 #include "core/utils/lifecycle.hpp"
 #include "core/utils/thread.hpp"
@@ -68,6 +69,9 @@ int main(int argc, char *argv[]) {
 
   vkpcnx::utils::setExecPath(argv[0]);
   brls::Logger::info("exec path: {}", argv[0] ? argv[0] : "(null)");
+#ifdef __SWITCH__
+  vkpcnx::platform::logNetworkStartup();
+#endif
 #ifdef VKPCNX_HAS_DEBUG_KEYS
   new vkpcnx::utils::DebugKeyListener();
 #endif
@@ -132,6 +136,20 @@ int main(int argc, char *argv[]) {
     brls::Logger::error("Application::init failed");
     return EXIT_FAILURE;
   }
+
+  // HOME / OnExitRequest only sets quitRequested; Application::exit() then
+  // runs inside mainLoop (logs "Exiting..." and deletes the root frame).
+  // harica15 stopped right after that delete with no "main loop exited" or
+  // "Log: clean exit", so flush here to see whether we die in clear(),
+  // Threading::stop(), or while destroying the platform.
+  brls::Application::getExitEvent()->subscribe([] {
+    brls::Logger::info("exit: Application::exit starting (tearing down UI)");
+    vkpcnx::diag::flushLogging();
+  });
+  brls::Application::getExitDoneEvent()->subscribe([] {
+    brls::Logger::info("exit: UI and worker threads stopped, destroying platform");
+    vkpcnx::diag::flushLogging();
+  });
 
   brls::Application::registerXMLView("vkpcnx:AnimatedWebp", vkpcnx::AnimatedWebp::create);
   brls::Application::registerXMLView(
