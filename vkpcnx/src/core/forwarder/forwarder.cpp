@@ -6,6 +6,7 @@
 #include "core/forwarder/nca_builder.hpp"
 #include "core/http.hpp"
 #include "core/settings.hpp"
+#define STB_IMAGE_WRITE_IMPLEMENTATION // screenshot.cpp, the other user, is desktop-only
 #include "extern/stb_image_write.h"
 
 #include <borealis.hpp>

@@ -1,0 +1,115 @@
+diff --git a/src/conn_poll.c b/src/conn_poll.c
+index 7d6ed7b..2ce2564 100644
+--- a/src/conn_poll.c
++++ b/src/conn_poll.c
+@@ -19,6 +19,10 @@
+ 
+ #define BUFFER_SIZE 4096
+ 
++#ifdef __SWITCH__
++#include <switch/kernel/svc.h>
++#endif
++
+ typedef struct registry_impl {
+ 	thread_t thread;
+ #ifdef _WIN32
+@@ -59,8 +63,29 @@ void conn_poll_change_tcp_fail(juice_agent_t *agent);
+ void conn_poll_change_tcp_state(juice_agent_t *agent, tcp_state_t state);
+ int conn_poll_run(conn_registry_t *registry);
+ 
++// vkpcnx: socket-level receive statistics, read by the app's network diagnostics
++// (cumulative; "gap" and "batch" maxima are reset by vkpcnx_juice_take_maxima())
++volatile unsigned long long vkpcnx_juice_rx_pkts = 0;
++volatile unsigned long long vkpcnx_juice_rx_bytes = 0;
++volatile unsigned long long vkpcnx_juice_rx_batch_max = 0; // datagrams drained in one wakeup
++volatile unsigned long long vkpcnx_juice_rx_gap_max_ms = 0; // longest time between two wakeups with data
++static timestamp_t vkpcnx_last_rx_ts = 0;
++
++void vkpcnx_juice_take_maxima(unsigned long long *batch_max, unsigned long long *gap_max_ms) {
++	*batch_max = __atomic_exchange_n(&vkpcnx_juice_rx_batch_max, 0, __ATOMIC_RELAXED);
++	*gap_max_ms = __atomic_exchange_n(&vkpcnx_juice_rx_gap_max_ms, 0, __ATOMIC_RELAXED);
++}
++
+ static thread_return_t THREAD_CALL conn_thread_entry(void *arg) {
+ 	thread_set_name_self("juice poll");
++#ifdef __SWITCH__
++	// The socket is only drained while this thread runs, and a full kernel
++	// buffer drops packets: run ahead of the render/UI threads (priority 0x2C)
++	{
++		Result rc = svcSetThreadPriority(CUR_THREAD_HANDLE, 0x20);
++		JLOG_INFO("Poll thread priority set to 0x20: result 0x%x", (unsigned)rc);
++	}
++#endif
+ 	conn_registry_t *registry = (conn_registry_t *)arg;
+ 	conn_poll_run(registry);
+ 	return (thread_return_t)0;
+@@ -245,11 +270,24 @@ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd) {
+ 		addr_record_t src;
+ 		int ret = 0;
+ 		int left = 1000; // limit for fairness between sockets
++		unsigned long long batch = 0;
++		{
++			timestamp_t now = current_timestamp();
++			if (vkpcnx_last_rx_ts) {
++				unsigned long long gap = (unsigned long long)(now - vkpcnx_last_rx_ts);
++				if (gap > vkpcnx_juice_rx_gap_max_ms)
++					vkpcnx_juice_rx_gap_max_ms = gap;
++			}
++			vkpcnx_last_rx_ts = now;
++		}
+ 		while (left--) {
+ 			if ((ret = conn_poll_recv_udp(conn_impl->udp_sock, buffer, BUFFER_SIZE,
+ 							&src)) <= 0) {
+ 				break;
+ 			}
++			batch++;
++			__atomic_fetch_add(&vkpcnx_juice_rx_pkts, 1, __ATOMIC_RELAXED);
++			__atomic_fetch_add(&vkpcnx_juice_rx_bytes, (unsigned long long)ret, __ATOMIC_RELAXED);
+ 
+ 			if (agent_conn_recv(agent, buffer, (size_t)ret, &src) != 0) {
+ 				JLOG_WARN("Agent receive failed");
+@@ -258,6 +296,9 @@ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd) {
+ 			}
+ 		}
+ 
++		if (batch > vkpcnx_juice_rx_batch_max)
++			vkpcnx_juice_rx_batch_max = batch;
++
+ 		if (conn_impl->state == CONN_STATE_FINISHED)
+ 			return;
+ 
+diff --git a/src/udp.c b/src/udp.c
+index 71b5a8c..42bd254 100644
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -82,6 +82,30 @@ static socket_t create_socket_for_addrinfo(const udp_socket_config_t *config,
+ 	const sockopt_t buffer_size = 1 * 1024 * 1024;
+ 	setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&buffer_size, sizeof(buffer_size));
+ 	setsockopt(sock, SOL_SOCKET, SO_SNDBUF, (const char *)&buffer_size, sizeof(buffer_size));
++#ifdef __SWITCH__
++	{
++		// The BSD service may refuse (or clamp) 1 MiB; find out what the socket
++		// really got and, if it is small, settle for the largest size it accepts
++		int got = 0;
++		socklen_t gotlen = sizeof(got);
++		int rc = getsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char *)&got, &gotlen);
++		JLOG_INFO("UDP socket SO_RCVBUF: asked %d, got %d (getsockopt %d, errno %d)", (int)buffer_size,
++		          got, rc, rc ? (int)sockerrno : 0);
++		if (rc == 0 && got < 256 * 1024) {
++			for (int size = 512 * 1024; size >= 64 * 1024; size /= 2) {
++				int v = size;
++				if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&v, sizeof(v)) == 0) {
++					int now = 0;
++					gotlen = sizeof(now);
++					getsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char *)&now, &gotlen);
++					JLOG_INFO("UDP socket SO_RCVBUF retried with %d: now %d", v, now);
++					if (now >= got)
++						break;
++				}
++			}
++		}
++	}
++#endif
+ 
+ 	ctl_t nbio = 1;
+ 	if (ioctlsocket(sock, FIONBIO, &nbio)) {

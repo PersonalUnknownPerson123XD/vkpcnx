@@ -3,7 +3,9 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <map>
+#include <mutex>
 #include <vector>
 
 #include <rtc/rtc.hpp>
@@ -43,6 +45,9 @@ public:
   // Lateness of reordered packets: window kept, and how often its percentiles are refreshed
   static constexpr size_t LATENESS_WINDOW = 256;
   static constexpr size_t LATENESS_REFRESH = 64;
+  // NACKed sequence numbers per incoming() call (oldest first): a flood of
+  // them on a link that is dropping most packets only makes it worse
+  static constexpr size_t MAX_NACKS_PER_CALL = 96;
   static constexpr size_t MAX_HELD = 2048; // packets; also the largest gap that is waited for
 
   struct Counters {
@@ -68,8 +73,16 @@ public:
   std::function<void()> onLoss;
   // The server never answered the NACKs; recovery is off from now on
   std::function<void()> onNackIgnored;
+  // ... but an RTX retransmission did turn up later: NACKs are back on
+  std::function<void()> onNackResumed;
   // The delay before a first NACK (or, after onNackIgnored, the reorder wait) changed
   std::function<void(Clock::duration nackDelay, Clock::duration reorderWait)> onDelayChange;
+
+  // True (once) if the access unit with this RTP timestamp has packets missing:
+  // the gap that was given up fell inside it or at either end. Such a frame
+  // would only make the decoder choke, so the caller drops it and resyncs.
+  // Thread-safe (called from the frame callback).
+  bool takeDamaged(uint32_t rtpTimestamp);
 
   void incoming(rtc::message_vector &messages, const rtc::message_callback &send) override;
   // incoming() with an explicit clock, for tests
@@ -91,6 +104,7 @@ private:
   void release(Clock::time_point now);
   void sendNacks(const rtc::message_callback &send, Clock::time_point now);
   void giveUpUntil(int64_t seq);
+  void markDamaged(uint32_t rtpTimestamp);
   void addLateness(Clock::duration lateness);
   // Sender restarted (new SSRC, or a sequence jump): flush and start over
   void restart();
@@ -108,6 +122,11 @@ private:
   std::map<int64_t, Missing> missing_;
   rtc::message_vector ready_; // released during this incoming() call
   int oldStreak_ = 0;
+  bool haveReleased_ = false;
+  uint32_t lastReleasedTs_ = 0; // RTP timestamp of the last packet handed on
+
+  std::mutex damagedMutex_;
+  std::deque<uint32_t> damaged_; // timestamps of frames with a hole, newest last
 
   bool nackIgnored_ = false;
   bool rtxSeen_ = false;          // any RTX payload, duplicates included

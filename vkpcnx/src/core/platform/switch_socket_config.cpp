@@ -15,7 +15,8 @@ extern "C" {
 Result __real_socketInitialize(const SocketInitConfig *config);
 
 Result __wrap_socketInitialize(const SocketInitConfig *config) {
-  SocketInitConfig cfg = *config;
+  // socketInitializeDefault() passes NULL: libnx then uses its own defaults
+  SocketInitConfig cfg = config ? *config : *socketGetDefaultInitConfig();
   // Transfer memory grows with sb_efficiency * (tcp max + udp buffers):
   // 8 * (0x40000 * 2 + 0x2400 + 0x80000) ≈ 8.3 MB of the app heap
   cfg.udp_rx_buf_size = std::max<u32>(cfg.udp_rx_buf_size, 0x80000);

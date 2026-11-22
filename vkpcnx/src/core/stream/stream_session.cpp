@@ -1,5 +1,6 @@
 #include "core/stream/stream_session.hpp"
 
+#include <algorithm>
 #include <borealis.hpp>
 
 namespace vkpcnx::stream {
@@ -363,7 +364,18 @@ void StreamSession::sampleStats() {
   if (frozenSamples_ >= FREEZE_SAMPLES) {
     brls::Logger::warning("StreamSession: video frozen for {} s, renegotiating", frozenSamples_);
     frozenSamples_ = 0;
-    reconfigureVideo(config_.video);
+    // The picture is dying from loss: ask for a lighter stream this time
+    auto video = config_.video;
+    int newMax = std::max(1500, video.bitrates.maxKbps * 6 / 10);
+    if (newMax < video.bitrates.maxKbps) {
+      video.bitrates.maxKbps = newMax;
+      video.bitrates.startKbps = std::min(video.bitrates.startKbps, newMax * 4 / 5);
+      video.bitrates.minKbps = std::min(video.bitrates.minKbps, video.bitrates.startKbps / 2);
+      brls::Logger::warning(
+        "StreamSession: lowering the video bitrate cap to {} kbit/s", video.bitrates.maxKbps
+      );
+    }
+    reconfigureVideo(video);
   }
 }
 

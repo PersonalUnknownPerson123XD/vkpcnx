@@ -6,6 +6,7 @@
 #include "view/stream_overlay/gamepad_pointer_dialog.hpp"
 #include "view/stream_overlay/touchscreen_mode_dialog.hpp"
 #include "view/striped_list.hpp"
+#include <optional>
 #include <borealis.hpp>
 #include <nlohmann/json.hpp>
 

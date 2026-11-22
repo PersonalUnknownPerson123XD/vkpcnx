@@ -28,6 +28,50 @@ static const H264Offer H264_OFFERS[] = {
   {127, 125, "42e01f"}, // ConstrainedBase
 };
 
+// Counters kept by the patched libjuice / libdatachannel (cmake/patches): where
+// along the receive path packets disappear
+extern "C" {
+extern volatile unsigned long long vkpcnx_juice_rx_pkts, vkpcnx_juice_rx_bytes;
+void vkpcnx_juice_take_maxima(unsigned long long *batchMax, unsigned long long *gapMaxMs);
+extern volatile unsigned long long vkpcnx_dtls_in_pkts, vkpcnx_dtls_queue_max, vkpcnx_dtls_busy_us;
+}
+
+// Socket → DTLS queue → RTP, per second. Comparing the three tells a starved
+// socket (kernel drops, socket rate far below what the server sends) from a
+// slow consumer (queue deep, busy ≈ 100%) from loss on the path.
+class NetDiagLog {
+public:
+  // `rtpReceived`/`rtpLost`: this second's RTP-level counts
+  void log(uint64_t rtpReceived, uint64_t rtpLost) {
+    unsigned long long pkts = vkpcnx_juice_rx_pkts, bytes = vkpcnx_juice_rx_bytes;
+    unsigned long long in = vkpcnx_dtls_in_pkts, busy = vkpcnx_dtls_busy_us;
+    unsigned long long batchMax = 0, gapMax = 0;
+    vkpcnx_juice_take_maxima(&batchMax, &gapMax);
+    unsigned long long queueMax = __atomic_exchange_n(&vkpcnx_dtls_queue_max, 0ull, __ATOMIC_RELAXED);
+    brls::Logger::info(
+      "Net: socket {} pkts {} kbit/s (largest drain {} pkts, longest wait between reads {} ms) | "
+      "to DTLS {} pkts, queue up to {}, busy {} ms | RTP {} received, {} lost (server sent ~{})",
+      pkts - pkts_,
+      (bytes - bytes_) * 8 / 1000,
+      batchMax,
+      gapMax,
+      in - in_,
+      queueMax,
+      (busy - busy_) / 1000,
+      rtpReceived,
+      rtpLost,
+      rtpReceived + rtpLost
+    );
+    pkts_ = pkts;
+    bytes_ = bytes;
+    in_ = in;
+    busy_ = busy;
+  }
+
+private:
+  unsigned long long pkts_ = 0, bytes_ = 0, in_ = 0, busy_ = 0;
+};
+
 // Once a second, a summary of what the receive buffer had to deal with
 class RtpLossLog {
 public:
@@ -42,6 +86,11 @@ public:
     auto now = std::chrono::steady_clock::now();
     if (now - since_ < std::chrono::seconds(1))
       return;
+    // The network diagnostics line goes out while there is loss, and every 10 s otherwise
+    if (sum_.lost || sum_.late || ++quiet_ >= 10) {
+      quiet_ = 0;
+      net_.log(sum_.received, sum_.lost);
+    }
     if (sum_.lost || sum_.recovered || sum_.late)
       brls::Logger::warning(
         "Video RTP: last second: {} packets, {} lost, {} recovered by retransmission, {} late "
@@ -60,6 +109,8 @@ public:
 
 private:
   RtpReceiveBuffer::Counters sum_;
+  NetDiagLog net_;
+  int quiet_ = 0;
   std::chrono::steady_clock::time_point since_ = std::chrono::steady_clock::now();
 };
 static constexpr int OPUS_PT = 111;
@@ -243,6 +294,9 @@ void WebRtcSession::createVideo(const VideoConfig &config) {
       "out reordering from now on"
     );
   };
+  receiveBuffer->onNackResumed = [] {
+    brls::Logger::info("Video RTP: retransmissions do arrive after all, NACKs are on again");
+  };
   receiveBuffer->onDelayChange = [](auto nackDelay, auto reorderWait) {
     using std::chrono::duration_cast;
     using std::chrono::milliseconds;
@@ -255,11 +309,22 @@ void WebRtcSession::createVideo(const VideoConfig &config) {
   };
   peer.videoTrack->chainMediaHandler(receiveBuffer);
   peer.videoTrack->onFrame([this,
-                            generation = peer.generation](rtc::binary data, rtc::FrameInfo info) {
+                            generation = peer.generation,
+                            weakBuffer = std::weak_ptr<RtpReceiveBuffer>(receiveBuffer)](
+                             rtc::binary data, rtc::FrameInfo info
+                           ) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (video_.generation != generation)
         return;
+    }
+    // A frame with packets missing (the gap was given up inside or next to it)
+    // can only corrupt the picture: drop it and wait for the next keyframe
+    if (auto buffer = weakBuffer.lock(); buffer && buffer->takeDamaged(info.timestamp)) {
+      framesDiscarded_++;
+      if (onVideoLoss)
+        onVideoLoss();
+      return;
     }
     videoBytes_ += data.size();
     if (onVideoFrame)

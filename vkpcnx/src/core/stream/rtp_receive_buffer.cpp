@@ -57,6 +57,13 @@ void RtpReceiveBuffer::incomingAt(
     if (auto rtx = rtxPts_.find(pt); rtx != rtxPts_.end()) {
       if (auto original = unwrapRtx(message, rtx->second)) {
         rtxSeen_ = true;
+        if (nackIgnored_) {
+          // Retransmissions do arrive (late, when the link was swamped): ask again
+          nackIgnored_ = false;
+          nackedGivenUp_ = 0;
+          if (onNackResumed)
+            onNackResumed();
+        }
         insert(std::move(original), true, now);
       }
       continue;
@@ -181,6 +188,8 @@ void RtpReceiveBuffer::release(Clock::time_point now) {
     auto first = held_.begin();
     if (first->first == next_) {
       if (first->second) {
+        lastReleasedTs_ = rtpHeader(*first->second)->timestamp();
+        haveReleased_ = true;
         ready_.push_back(std::move(first->second));
         delta_.received++;
       }
@@ -199,6 +208,16 @@ void RtpReceiveBuffer::release(Clock::time_point now) {
 
 void RtpReceiveBuffer::giveUpUntil(int64_t seq) {
   auto end = missing_.lower_bound(seq);
+  if (end != missing_.begin()) {
+    // The frames on both sides of the hole are incomplete
+    if (haveReleased_)
+      markDamaged(lastReleasedTs_);
+    for (auto it = held_.lower_bound(seq); it != held_.end(); ++it)
+      if (it->second) {
+        markDamaged(rtpHeader(*it->second)->timestamp());
+        break;
+      }
+  }
   for (auto it = missing_.begin(); it != end; ++it) {
     delta_.lost++;
     if (it->second.nacks > 0)
@@ -214,6 +233,24 @@ void RtpReceiveBuffer::giveUpUntil(int64_t seq) {
     if (onNackIgnored)
       onNackIgnored();
   }
+}
+
+void RtpReceiveBuffer::markDamaged(uint32_t rtpTimestamp) {
+  std::lock_guard<std::mutex> lock(damagedMutex_);
+  if (!damaged_.empty() && damaged_.back() == rtpTimestamp)
+    return;
+  damaged_.push_back(rtpTimestamp);
+  while (damaged_.size() > 64)
+    damaged_.pop_front();
+}
+
+bool RtpReceiveBuffer::takeDamaged(uint32_t rtpTimestamp) {
+  std::lock_guard<std::mutex> lock(damagedMutex_);
+  auto it = std::find(damaged_.begin(), damaged_.end(), rtpTimestamp);
+  if (it == damaged_.end())
+    return false;
+  damaged_.erase(it);
+  return true;
 }
 
 void RtpReceiveBuffer::addLateness(Clock::duration lateness) {
@@ -253,6 +290,8 @@ void RtpReceiveBuffer::restart() {
   if (!missing_.empty()) {
     delta_.lost += missing_.size();
     lostInCall_ = true;
+    if (haveReleased_)
+      markDamaged(lastReleasedTs_);
   }
   held_.clear();
   missing_.clear();
@@ -266,6 +305,8 @@ void RtpReceiveBuffer::sendNacks(const rtc::message_callback &send, Clock::time_
 
   std::vector<int64_t> seqs;
   for (auto &[seq, m] : missing_) {
+    if (seqs.size() >= MAX_NACKS_PER_CALL)
+      break;
     if (m.nacks >= MAX_NACKS)
       continue;
     if (m.nacks == 0 ? now - m.since < nackDelay_ : now - m.lastNack < NACK_INTERVAL)

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/account_info.hpp"
+#include "core/settings.hpp"
 #include "core/diag/build_info.hpp"
 #include "core/utils/thread.hpp"
 #include "view/controller_profile_dialog.hpp"
@@ -27,6 +28,8 @@ public:
     if (accountInfo.get() && !accountInfo.get()->empty())
       renderSafely(*accountInfo.get());
     accountInfo.fetchAsync();
+
+    initStreamSettings();
 
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadMappingDialog());
@@ -73,6 +76,49 @@ public:
     brls::Application::getRunLoopEvent()->unsubscribe(this->controlsUpdLoopSub);
   }
 
+  // Video bitrate cap / frame rate / resolution of the stream, read by
+  // StreamActivity::buildConfig() when a game starts
+  void initStreamSettings() {
+    static const int bitrates[] = {0, 3, 5, 8, 12};
+    static const int fpsValues[] = {0, 30, 60};
+    auto &settings = Settings::instance();
+#ifdef __SWITCH__
+    constexpr int DEFAULT_BITRATE = 5;
+#else
+    constexpr int DEFAULT_BITRATE = 0;
+#endif
+    int bitrate = settings.get<int>("/stream/bitrate_max_mbit", DEFAULT_BITRATE);
+    int bitrateIdx = 0;
+    for (int i = 0; i < 5; i++)
+      if (bitrates[i] == bitrate)
+        bitrateIdx = i;
+    this->streamBitrateCell->init(
+      "Битрейт видео",
+      {"Авто (до 12 Мбит/с)", "3 Мбит/с", "5 Мбит/с", "8 Мбит/с", "12 Мбит/с"},
+      bitrateIdx,
+      [](int i) { Settings::instance().set<int>("/stream/bitrate_max_mbit", bitrates[i]); }
+    );
+
+    int fps = settings.get<int>("/stream/fps", 0);
+    int fpsIdx = 0;
+    for (int i = 0; i < 3; i++)
+      if (fpsValues[i] == fps)
+        fpsIdx = i;
+    this->streamFpsCell->init(
+      "Частота кадров", {"Авто (60)", "30", "60"}, fpsIdx,
+      [](int i) { Settings::instance().set<int>("/stream/fps", fpsValues[i]); }
+    );
+
+    int height = settings.get<int>("/stream/height", 0);
+    this->streamResolutionCell->init(
+      "Разрешение", {"Авто (по экрану)", "720p"}, height == 720 ? 1 : 0,
+      [](int i) {
+        Settings::instance().set<int>("/stream/width", i == 1 ? 1280 : 0);
+        Settings::instance().set<int>("/stream/height", i == 1 ? 720 : 0);
+      }
+    );
+  }
+
 private:
   // The views read many fields of the reply; a malformed one must not take the app down
   void renderSafely(const nlohmann::json &account) {
@@ -97,6 +143,9 @@ private:
   BRLS_BIND(brls::Rectangle, serverLoadBar3, "account_details/server_load/bar_3");
 
   BRLS_BIND(brls::DetailCell, gamepadMappingModeCell, "account_details/gamepad_mapping_mode");
+  BRLS_BIND(brls::SelectorCell, streamBitrateCell, "account_details/stream_bitrate");
+  BRLS_BIND(brls::SelectorCell, streamFpsCell, "account_details/stream_fps");
+  BRLS_BIND(brls::SelectorCell, streamResolutionCell, "account_details/stream_resolution");
   BRLS_BIND(brls::DetailCell, controllerProfileCell, "account_details/controller_profile");
   BRLS_BIND(brls::DetailCell, gamepadPointerCell, "account_details/gamepad_pointer");
   BRLS_BIND(brls::DetailCell, touchscreenModeCell, "account_details/touchscreen_mode");

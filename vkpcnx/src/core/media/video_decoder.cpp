@@ -2,6 +2,7 @@
 #include "core/diag/log.hpp"
 
 #include <borealis/core/logger.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -279,8 +280,12 @@ void VideoDecoder::waitForKeyframe() {
     waitingForKeyframe_ = true;
     waitSince_ = now;
   }
-  if (now - lastKeyframeRequest_ >= KEYFRAME_REQUEST_INTERVAL) {
+  if (now - lastKeyframeRequest_ >= keyframeInterval_) {
     lastKeyframeRequest_ = now;
+    // Keep asking, but ever more slowly: on a link that is losing most packets
+    // a keyframe (the biggest burst of the stream) rarely arrives whole, and
+    // asking for one every second only adds to the load
+    keyframeInterval_ = std::min(keyframeInterval_ * 2, KEYFRAME_REQUEST_INTERVAL_MAX);
     if (onDecodeError)
       onDecodeError();
   }
@@ -328,6 +333,7 @@ void VideoDecoder::run() {
     if (waitingForKeyframe_) {
       if (isKeyframe(packet.data)) {
         waitingForKeyframe_ = false;
+        keyframeInterval_ = KEYFRAME_REQUEST_INTERVAL;
         avcodec_flush_buffers(codecCtx_); // drop references to broken frames
       } else if (std::chrono::steady_clock::now() - waitSince_ < KEYFRAME_WAIT_LIMIT) {
         window_.skipped++;

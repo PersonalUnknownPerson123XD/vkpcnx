@@ -28,6 +28,14 @@
     <brls:Label id="account_details/server_load/label" text="Загрузка..." fontSize="16" alpha="0.75"/>
   </brls:Box>
 
+  <brls:Label text="Настройки стрима (со следующего запуска игры)" fontSize="15" alpha="0.5" marginBottom="20"/>
+
+  <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" alpha="0.25"/>
+  <brls:SelectorCell id="account_details/stream_bitrate" title="Битрейт видео"/>
+  <brls:SelectorCell id="account_details/stream_fps" title="Частота кадров"/>
+  <brls:SelectorCell id="account_details/stream_resolution" title="Разрешение" marginBottom="10"/>
+  <brls:Label text="Если картинка рассыпается или замирает, выберите меньший битрейт (3–5 Мбит/с) — Wi-Fi Switch плохо переваривает поток покрупнее." alpha="0.5" fontSize="15" marginBottom="40"/>
+
   <brls:Label text="Настройки управления" fontSize="15" alpha="0.5" marginBottom="20"/>
 
   <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" alpha="0.25"/>

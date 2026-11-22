@@ -414,14 +414,20 @@ StreamSession::Config StreamActivity::buildConfig() const {
   c.manager.monitorWidth = monitorW;
   c.manager.monitorHeight = monitorH;
 #ifdef __SWITCH__
-  // The Switch can't take in UDP much faster than ~1500 packets/s: at the
-  // server's default 25+ Mbit/s cap a third of the video packets were lost
-  constexpr int DEFAULT_BITRATE_MAX_MBIT = 12;
+  // The Switch can't take in UDP much faster than ~1500 packets/s (~14 Mbit/s):
+  // at the server's default 25+ Mbit/s cap a third of the video packets were
+  // lost, and over Wi-Fi even 9-12 Mbit/s overwhelmed some consoles (90% loss,
+  // no picture). So 5 Mbit/s unless the user raises it; "Auto" (0) = up to 12.
+  constexpr int DEFAULT_BITRATE_MAX_MBIT = 5;
+  constexpr int AUTO_BITRATE_MAX_MBIT = 12;
 #else
   constexpr int DEFAULT_BITRATE_MAX_MBIT = 0; // server default (§6.3)
+  constexpr int AUTO_BITRATE_MAX_MBIT = 0;
 #endif
-  c.manager.bitrateMaxMbit =
-    settings.get<int>("/stream/bitrate_max_mbit", DEFAULT_BITRATE_MAX_MBIT);
+  int bitrateMax = settings.get<int>("/stream/bitrate_max_mbit", DEFAULT_BITRATE_MAX_MBIT);
+  if (bitrateMax <= 0)
+    bitrateMax = AUTO_BITRATE_MAX_MBIT;
+  c.manager.bitrateMaxMbit = bitrateMax;
   c.manager.bitrateMinMbit = settings.get<int>("/stream/bitrate_min_mbit", 0);
 
   // §6.3: stream size = min(user resolution, monitor) snapped to the list
@@ -464,6 +470,12 @@ StreamSession::Config StreamActivity::buildConfig() const {
     c.manager.bitrateMinMbit > 0 ? c.manager.bitrateMinMbit * 1000 : br.minKbps;
   c.video.bitrates.maxKbps =
     c.manager.bitrateMaxMbit > 0 ? c.manager.bitrateMaxMbit * 1000 : br.maxKbps;
+  // The start bitrate must not exceed the cap (the table's 9 Mbit/s at 720p60
+  // would make the server open at 9 Mbit/s and then fall back)
+  c.video.bitrates.startKbps =
+    std::min(c.video.bitrates.startKbps, c.video.bitrates.maxKbps * 4 / 5);
+  c.video.bitrates.minKbps =
+    std::min(c.video.bitrates.minKbps, c.video.bitrates.startKbps / 2);
   return c;
 }
 

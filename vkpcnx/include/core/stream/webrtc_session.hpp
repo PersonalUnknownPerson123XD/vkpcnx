@@ -132,6 +132,7 @@ private:
   std::atomic<uint64_t> rtpLost_{0};
   std::atomic<uint64_t> rtpRecovered_{0};
   std::atomic<uint64_t> keyframeRequests_{0};
+  std::atomic<uint64_t> framesDiscarded_{0}; // frames with a hole, dropped before the decoder
 };
 
 } // namespace vkpcnx::stream

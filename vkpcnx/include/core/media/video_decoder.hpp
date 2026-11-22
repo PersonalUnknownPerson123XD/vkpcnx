@@ -37,7 +37,8 @@ public:
   // After a decode error or dropped packets, skip to the next keyframe, asking
   // for one this often, and give up waiting after the limit
   static constexpr std::chrono::milliseconds KEYFRAME_REQUEST_INTERVAL{1000};
-  static constexpr std::chrono::milliseconds KEYFRAME_WAIT_LIMIT{2000};
+  static constexpr std::chrono::milliseconds KEYFRAME_REQUEST_INTERVAL_MAX{4000};
+  static constexpr std::chrono::milliseconds KEYFRAME_WAIT_LIMIT{6000};
 
   VideoDecoder();
   ~VideoDecoder();
@@ -108,6 +109,7 @@ private:
   // Decoder thread only
   bool waitingForKeyframe_ = false;
   std::chrono::steady_clock::time_point waitSince_, lastKeyframeRequest_;
+  std::chrono::milliseconds keyframeInterval_{KEYFRAME_REQUEST_INTERVAL};
   struct Window {
     std::chrono::steady_clock::time_point since;
     uint64_t decoded, dropped, errors, skipped;

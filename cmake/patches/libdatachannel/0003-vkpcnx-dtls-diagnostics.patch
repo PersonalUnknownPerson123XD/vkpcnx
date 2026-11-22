@@ -1,0 +1,47 @@
+diff --git a/src/impl/dtlstransport.cpp b/src/impl/dtlstransport.cpp
+index 689eb06..dbf7114 100644
+--- a/src/impl/dtlstransport.cpp
++++ b/src/impl/dtlstransport.cpp
+@@ -27,6 +27,14 @@
+ 
+ using namespace std::chrono;
+ 
++// vkpcnx: receive-path statistics for the app's network diagnostics (cumulative;
++// the queue maximum is reset by the reader)
++extern "C" {
++volatile unsigned long long vkpcnx_dtls_in_pkts = 0;   // datagrams handed to DtlsTransport::incoming()
++volatile unsigned long long vkpcnx_dtls_queue_max = 0; // deepest incoming queue seen
++volatile unsigned long long vkpcnx_dtls_busy_us = 0;   // time in mbedtls_ssl_read (SRTP decrypt + media handlers)
++}
++
+ namespace rtc::impl {
+ 
+ void DtlsTransport::enqueueRecv() {
+@@ -501,6 +509,12 @@ void DtlsTransport::incoming(message_ptr message) {
+ 	}
+ 
+ 	PLOG_VERBOSE << "Incoming size=" << message->size();
++	__atomic_fetch_add(&vkpcnx_dtls_in_pkts, 1, __ATOMIC_RELAXED);
++	{
++		unsigned long long depth = mIncomingQueue.size();
++		if (depth > vkpcnx_dtls_queue_max)
++			vkpcnx_dtls_queue_max = depth;
++	}
+ 	mIncomingQueue.push(message);
+ 	enqueueRecv();
+ }
+@@ -572,8 +586,14 @@ void DtlsTransport::doRecv() {
+ 				int ret;
+ 				{
+ 					std::lock_guard lock(mSslMutex);
++					auto readStart = steady_clock::now();
+ 					ret = mbedtls_ssl_read(&mSsl, reinterpret_cast<unsigned char *>(buffer),
+ 					                       bufferSize);
++					__atomic_fetch_add(
++					    &vkpcnx_dtls_busy_us,
++					    (unsigned long long)duration_cast<microseconds>(steady_clock::now() - readStart)
++					        .count(),
++					    __ATOMIC_RELAXED);
+ 				}
+ 
+ 				if (ret == MBEDTLS_ERR_SSL_WANT_READ) {
