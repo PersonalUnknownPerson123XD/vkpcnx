@@ -19,9 +19,14 @@ jobs:
           submodules: recursive
       - name: Install dependencies
         run: |
-          dkp-pacman -Sy --noconfirm --needed \
-            switch-curl switch-zlib switch-libopus switch-ffmpeg switch-libwebp \
-            switch-glfw switch-mesa switch-libdrm_nouveau
+          # pkg.devkitpro.org (Cloudflare) sometimes answers 403: retry
+          for attempt in 1 2 3 4 5 6; do
+            dkp-pacman -Sy --noconfirm --needed \
+              switch-curl switch-zlib switch-libopus switch-ffmpeg switch-libwebp \
+              switch-glfw switch-mesa switch-libdrm_nouveau && exit 0
+            sleep $((attempt * 30))
+          done
+          exit 1
       - name: Install ccache
         # Optional: without it the build is just slower
         continue-on-error: true
