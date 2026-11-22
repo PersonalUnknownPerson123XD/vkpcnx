@@ -2,6 +2,9 @@
 
 #include <glad/glad.h>
 
+#include <cstring>
+#include <vector>
+
 #include <borealis/core/application.hpp>
 
 extern "C" {
@@ -221,7 +224,9 @@ void StreamView::upload(const AVFrame *frame) {
   colorRange_ = frame->color_range;
   int cw = (frame->width + 1) / 2, ch = (frame->height + 1) / 2;
 
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  // Row-length uploads need GL_UNPACK_ALIGNMENT 1 when a row isn't a multiple
+  // of 4. The Switch nvtegra transfer already aligns pitches to 256, so the
+  // packed-row path is only for software frames (or a failed alignment).
   auto uploadPlane = [&](
                        int unit,
                        GLenum internal,
@@ -234,11 +239,33 @@ void StreamView::upload(const AVFrame *frame) {
                      ) {
     glActiveTexture(GL_TEXTURE0 + unit);
     glBindTexture(GL_TEXTURE_2D, gl_->textures[unit]);
-    glPixelStorei(GL_UNPACK_ROW_LENGTH, linesize / bpp);
-    if (realloc)
-      glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, GL_UNSIGNED_BYTE, data);
-    else
-      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, format, GL_UNSIGNED_BYTE, data);
+    const int rowBytes = w * bpp;
+    if (linesize == rowBytes) {
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+      if (realloc)
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, GL_UNSIGNED_BYTE, data);
+      else
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, format, GL_UNSIGNED_BYTE, data);
+    } else if (linesize > rowBytes && (linesize % bpp) == 0) {
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, linesize / bpp);
+      if (realloc)
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, GL_UNSIGNED_BYTE, data);
+      else
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, format, GL_UNSIGNED_BYTE, data);
+    } else {
+      // Odd pitch: one tightly packed copy, then a single upload
+      std::vector<uint8_t> packed(static_cast<size_t>(rowBytes) * h);
+      for (int y = 0; y < h; y++)
+        std::memcpy(packed.data() + static_cast<size_t>(y) * rowBytes, data + static_cast<size_t>(y) * linesize, rowBytes);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+      if (realloc)
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, format, GL_UNSIGNED_BYTE, packed.data());
+      else
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, format, GL_UNSIGNED_BYTE, packed.data());
+    }
   };
   uploadPlane(0, GL_R8, GL_RED, frame->width, frame->height, frame->data[0], frame->linesize[0], 1);
   if (nv12) {
@@ -378,14 +405,10 @@ void StreamView::draw(
       onVideoRectChanged(rw, rh);
   }
 
-  // Black behind the video (letterbox bars)
-  nvgBeginPath(vg);
-  nvgRect(vg, x, y, width, height);
-  nvgFillColor(vg, nvgRGB(0, 0, 0));
-  nvgFill(vg);
-
+  // The framebuffer was already cleared black, so don't spend a NanoVG fill
+  // on letterbox bars once a video frame is up. HUD / OSK / notifications
+  // still draw after we resume the NanoVG frame.
   if (frameWidth_ > 0) {
-    // Flush what nanovg has recorded so far, draw with raw GL, resume the frame
     nvgEndFrame(vg);
     drawVideo(rect.getMinX(), rect.getMinY(), rect.getWidth(), rect.getHeight());
     brls::Application::getPlatform()->getVideoContext()->resetState();
@@ -396,6 +419,11 @@ void StreamView::draw(
       static_cast<float>(brls::Application::getPlatform()->getVideoContext()->getScaleFactor())
     );
     nvgScale(vg, brls::Application::windowScale, brls::Application::windowScale);
+  } else {
+    nvgBeginPath(vg);
+    nvgRect(vg, x, y, width, height);
+    nvgFillColor(vg, nvgRGB(0, 0, 0));
+    nvgFill(vg);
   }
 
   if (onDrawBackdrop)

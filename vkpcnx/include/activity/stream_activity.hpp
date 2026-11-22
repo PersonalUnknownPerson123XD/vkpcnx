@@ -52,6 +52,9 @@ public:
   CONTENT_FROM_XML_RES("activity/stream.xml");
 
   void onContentAvailable() override;
+  // The stream fills the screen; never draw the activity under it (a shortcut
+  // launch leaves the queue activity on the stack).
+  bool isTranslucent() override { return false; }
   void willAppear(bool resetState) override;
   void onResume() override;
   void willDisappear(bool resetState) override;

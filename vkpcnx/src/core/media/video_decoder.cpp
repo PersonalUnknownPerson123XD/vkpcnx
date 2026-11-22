@@ -9,6 +9,7 @@
 
 extern "C" {
 #include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
 #include <libavutil/opt.h>
 }
 
@@ -178,6 +179,11 @@ bool VideoDecoder::open() {
     close();
     return false;
   }
+  brls::Logger::info(
+    "VideoDecoder: active {} / {}",
+    stats_.codecName,
+    stats_.hardware && stats_.hwAccelName ? *stats_.hwAccelName : "software"
+  );
   packet_ = av_packet_alloc();
   frame_ = av_frame_alloc();
   running_ = true;
@@ -424,6 +430,17 @@ bool VideoDecoder::decodePacket(const Packet &packet) {
     stats_.framesDecoded++;
     stats_.width = out->width;
     stats_.height = out->height;
+    if (stats_.framesDecoded == 1) {
+      const char *fmt = av_get_pix_fmt_name(static_cast<AVPixelFormat>(out->format));
+      brls::Logger::info(
+        "VideoDecoder: first frame {}x{} {} ({} / {})",
+        out->width,
+        out->height,
+        fmt ? fmt : "?",
+        stats_.codecName,
+        stats_.hardware && stats_.hwAccelName ? *stats_.hwAccelName : "software"
+      );
+    }
     got = true;
   }
 

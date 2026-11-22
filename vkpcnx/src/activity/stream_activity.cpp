@@ -1857,6 +1857,8 @@ void StreamActivity::tickProfileTimer() {
       break;
     }
   }
+  if (seconds == lastTimeLeftSeconds_ && timer->getVisibility() == brls::Visibility::VISIBLE)
+    return; // same displayed second: don't relayout the label every frame
   lastTimeLeftSeconds_ = seconds;
   int64_t h = seconds / 3600, m = (seconds / 60) % 60, s = seconds % 60;
   char buf[32];
