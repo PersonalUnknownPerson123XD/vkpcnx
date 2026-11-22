@@ -175,18 +175,16 @@ bool tryIcon(const std::string &url, Bytes &jpeg) {
   return false;
 }
 
-// Icon sources, best first: the catalog's vertical poster, the Steam library
-// capsule, the banner (centre-cropped), the app's own icon
+// Icon sources, best first: the Steam library capsule (top-pinned crop), the
+// catalog's vertical poster, the banner (centre-cropped), the app's own icon
 void makeIcon(const Request &req, Bytes &jpeg) {
-  if (tryIcon(req.verticalUrl, jpeg))
-    return;
   if (int appId = findSteamAppId(req); appId > 0) {
     const std::string base = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" +
                              std::to_string(appId) + "/library_600x900";
     if (tryIcon(base + "_2x.jpg", jpeg) || tryIcon(base + ".jpg", jpeg))
       return;
   }
-  if (tryIcon(req.coverUrl, jpeg))
+  if (tryIcon(req.verticalUrl, jpeg) || tryIcon(req.coverUrl, jpeg))
     return;
   jpeg.clear();
 }

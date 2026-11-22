@@ -13,8 +13,8 @@ struct Request {
   int launcherId = 0;
   std::string name;     // title shown on HOME
   std::string coverUrl;    // banner: last-resort icon source (centre-cropped)
-  std::string verticalUrl; // catalog picture_vertical: first choice for the 256x256 HOME icon
-  int steamAppId = 0;      // 0: look it up by name when the vertical poster is missing
+  std::string verticalUrl; // catalog picture_vertical: second choice for the 256x256 HOME icon
+  int steamAppId = 0;      // 0: looked up by exact name in the Steam store search
   std::string args;     // extra argv appended after --launcher/--game (leading space), e.g. " --name=..."
 };
 
