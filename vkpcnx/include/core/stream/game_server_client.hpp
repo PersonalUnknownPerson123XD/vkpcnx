@@ -116,7 +116,7 @@ private:
   SignallingSocket socket_;
   GameServerAddress server_;
   std::optional<int64_t> demoTimeLeft_, gameTimeLeft_, subscriptionLimitLeft_,
-    subscriptionDailyLeft_;
+    subscriptionDailyLeft_, bonusTimeLeft_;
   bool everConnected_ = false;
   bool authenticated_ = false;
   bool needReconnection_ = false;

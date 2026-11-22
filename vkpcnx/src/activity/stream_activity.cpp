@@ -497,6 +497,10 @@ void StreamActivity::onContentAvailable() {
   setupInput();
   if (session_)
     session_->start(buildConfig());
+    // A shortcut launch never went through the catalog, so nobody has asked for
+    // the account yet; the overlay's "time left" falls back to its balance
+    if (!AccountInfo::instance().get())
+      AccountInfo::instance().fetchAsync();
 }
 
 void StreamActivity::setupSession() {

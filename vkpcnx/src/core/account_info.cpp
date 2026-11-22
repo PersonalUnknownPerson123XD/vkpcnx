@@ -22,6 +22,13 @@ bool AccountInfo::apply(const nlohmann::json &me) {
   {
     // What the plan/minutes logic works from (no tokens in here)
     auto plan = me.contains("plan") ? me["plan"] : nlohmann::json();
+    // Every number/bool at the top level (names and ids aside): where the
+    // free minutes live differs between accounts
+    std::string fields;
+    for (auto it = me.begin(); it != me.end(); ++it)
+      if (it->is_number() || it->is_boolean() || it->is_null())
+        fields += " " + it.key() + "=" + it->dump();
+    brls::Logger::info("AccountInfo fields:{}", fields);
     brls::Logger::info(
       "AccountInfo: plan={} plan_type={} price={} minutes_balance={}",
       plan.is_object() ? plan.value("name", std::string("?")) : std::string("none"),

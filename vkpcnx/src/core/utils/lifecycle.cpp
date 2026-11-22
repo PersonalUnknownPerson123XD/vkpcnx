@@ -30,8 +30,20 @@ bool shortcutSession() { return g_shortcutSession; }
 
 void finishScreen(std::function<void()> then) {
   if (g_shortcutSession) {
-    brls::Logger::info("shortcut session over: quitting");
-    brls::Application::quit();
+    // Tear the screens down the normal way (the stream activity owns the
+    // session, decoder and audio and frees them when popped) and only then
+    // end the main loop, one iteration later and on the UI thread: quitting
+    // with the stream still alive crashed on the way out.
+    brls::sync([] {
+      auto quit = [] { brls::sync([] { brls::Application::quit(); }); };
+      if (brls::Application::getActivitiesStack().size() > 1) {
+        brls::Logger::info("shortcut session over: closing the stream, then quitting");
+        brls::Application::popActivity(brls::TransitionAnimation::NONE, quit);
+      } else {
+        brls::Logger::info("shortcut session over: quitting");
+        quit();
+      }
+    });
     return;
   }
   brls::Application::popActivity(

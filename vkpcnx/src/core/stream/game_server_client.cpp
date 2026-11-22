@@ -332,6 +332,18 @@ void GameServerClient::handleFrame(const Frame &frame) {
     emitTimeLeft();
     break;
   }
+  case MessageType::SC_BONUS_TIME_LEFT: {
+    // The free minutes: for an account without a plan the other counters are
+    // "10 years", this one is the real limit
+    proto::sc::BonusTimeLeft t;
+    t.ParseFromString(frame.payload);
+    brls::Logger::info("GameServer: <- SC_BONUS_TIME_LEFT {{ {} }}", t.ShortDebugString());
+    if (t.has_time_left_seconds()) {
+      bonusTimeLeft_ = t.time_left_seconds();
+      emitTimeLeft();
+    }
+    break;
+  }
   case MessageType::SC_GAME_DISABLE_TIMER:
     if (onTimerDisabled)
       onTimerDisabled();
@@ -466,7 +478,7 @@ void GameServerClient::handleFrame(const Frame &frame) {
 
 void GameServerClient::emitTimeLeft() {
   std::optional<int64_t> best;
-  for (auto v : {demoTimeLeft_, gameTimeLeft_, subscriptionLimitLeft_, subscriptionDailyLeft_}) {
+  for (auto v : {demoTimeLeft_, gameTimeLeft_, subscriptionLimitLeft_, subscriptionDailyLeft_, bonusTimeLeft_}) {
     if (v && (!best || *v < *best))
       best = v;
   }
