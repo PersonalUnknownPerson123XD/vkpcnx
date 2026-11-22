@@ -1,11 +1,13 @@
 #include <borealis.hpp>
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
+#include "activity/launch_queue_activity.hpp"
 #include "activity/login_activity.hpp"
 #include "activity/main_activity.hpp"
 #include "activity/stream_activity.hpp"
@@ -27,6 +29,32 @@
 
 #include <glad/glad.h>
 
+namespace {
+// Percent-decoding for --name= / --cover= (the forwarder writes them url-encoded
+// so they survive the loader's space-separated argv)
+std::string urlDecode(std::string_view in) {
+  std::string out;
+  for (size_t i = 0; i < in.size(); i++) {
+    if (in[i] == '%' && i + 2 < in.size() && std::isxdigit((unsigned char)in[i + 1]) &&
+        std::isxdigit((unsigned char)in[i + 2])) {
+      out += static_cast<char>(std::stoi(std::string(in.substr(i + 1, 2)), nullptr, 16));
+      i += 2;
+    } else {
+      out += in[i];
+    }
+  }
+  return out;
+}
+
+int parseInt(std::string_view v) {
+  try {
+    return std::stoi(std::string(v));
+  } catch (...) {
+    return 0;
+  }
+}
+} // namespace
+
 int main(int argc, char *argv[]) {
   // First: everything below may log, and crashes need the log file open
   vkpcnx::diag::initLogging(argc, argv);
@@ -40,6 +68,9 @@ int main(int argc, char *argv[]) {
   // --test-crash=segv|abort|throw crashes on purpose once the UI is up, to
   // check the crash section, the report offer and symbolization end to end
   std::string_view testCrash;
+  // --launcher=<id> [--game=<id> --name=<text> --cover=<url>]: set by the HOME menu
+  // shortcuts ("Add to home screen"); go straight into that game's queue
+  vkpcnx::GameCard::Game launchGame;
   for (int i = 1; i < argc; i++) {
     std::string_view arg(argv[i]);
     if (arg == "--create-report") {
@@ -58,6 +89,14 @@ int main(int argc, char *argv[]) {
       setenv("VKPCNX_PLAY_URL", std::string(arg.substr(11)).c_str(), 1);
     else if (arg.rfind("--test-crash=", 0) == 0)
       testCrash = arg.substr(13);
+    else if (arg.rfind("--launcher=", 0) == 0)
+      launchGame.launcherId = parseInt(arg.substr(11));
+    else if (arg.rfind("--game=", 0) == 0)
+      launchGame.id = parseInt(arg.substr(7));
+    else if (arg.rfind("--name=", 0) == 0)
+      launchGame.name = urlDecode(arg.substr(7));
+    else if (arg.rfind("--cover=", 0) == 0)
+      launchGame.pictureUrl = urlDecode(arg.substr(8));
   }
 
 #ifdef __SWITCH__
@@ -127,7 +166,21 @@ int main(int argc, char *argv[]) {
     game.name = "VKPCNX_PLAY_URL";
     brls::Application::pushActivity(new StreamActivity(game, *playUrl));
   } else if (Settings::instance().has("account")) {
-    brls::Application::pushActivity(new MainActivity());
+    if (launchGame.launcherId > 0) {
+      // Started from a HOME menu shortcut: the catalog stays underneath (Back
+      // from the queue lands there), the queue for the game opens on top
+      brls::Logger::info(
+        "launch from shortcut: game {} launcher {}", launchGame.id, launchGame.launcherId
+      );
+      if (launchGame.name.empty())
+        launchGame.name = "Игра";
+      brls::Application::pushActivity(new MainActivity(), brls::TransitionAnimation::NONE);
+      brls::Application::pushActivity(
+        new LaunchQueueActivity(launchGame), brls::TransitionAnimation::NONE
+      );
+    } else {
+      brls::Application::pushActivity(new MainActivity());
+    }
   } else {
     brls::Application::pushActivity(new LoginActivity());
   }

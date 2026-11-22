@@ -18,6 +18,7 @@ std::string &execPath() {
 } // namespace
 
 void setExecPath(const std::string &path) { execPath() = path; }
+std::string getExecPath() { return execPath(); }
 
 void relaunch() {
 #ifdef __SWITCH__

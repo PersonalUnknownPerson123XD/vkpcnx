@@ -23,6 +23,8 @@
 
 namespace vkpcnx::utils {
 void setExecPath(const std::string &path);
+// argv[0] as the app was started with (empty before setExecPath)
+std::string getExecPath();
 void relaunch();
 
 #ifdef VKPCNX_HAS_DEBUG_KEYS

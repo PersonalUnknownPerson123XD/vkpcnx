@@ -1,5 +1,6 @@
 #include "view/game_card.hpp"
 #include "activity/launch_queue_activity.hpp"
+#include "view/game_details.hpp"
 
 namespace vkpcnx {
 GameCard::GameCard() {
@@ -11,7 +12,16 @@ GameCard::GameCard() {
     brls::Application::pushActivity(new LaunchQueueActivity(this->game));
     return true;
   });
+
+  // + opens the details. The focused card's action wins over the screen's
+  // "+ quits", which stays in effect wherever no card has the focus.
+  this->registerAction("Подробнее", brls::BUTTON_START, [this](brls::View *) {
+    this->openDetails();
+    return true;
+  });
 }
+
+void GameCard::openDetails() { openGameDetails(this->game); }
 
 GameCard::~GameCard() { cancelImageLoad(); }
 

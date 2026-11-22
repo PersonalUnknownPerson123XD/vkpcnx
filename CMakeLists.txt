@@ -350,10 +350,21 @@ if (PLATFORM_DESKTOP)
         add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
     endif ()
 elseif (PLATFORM_SWITCH)
-    add_custom_target(${PROJECT_NAME}.nro DEPENDS ${PROJECT_NAME}
+    # The HOME-menu forwarder program (nx-hbloader based, see forwarder/hbl):
+    # its NSO + NPDM travel in the .nro's romfs, and the app wraps them into an
+    # installable title on the console ("Add to home screen").
+    find_program(MAKE_EXE NAMES make gmake REQUIRED)
+    add_custom_target(${PROJECT_NAME}_forwarder_hbl
+        COMMAND ${MAKE_EXE} -C ${CMAKE_SOURCE_DIR}/forwarder/hbl RELEASE=1
+        COMMENT "Building the forwarder loader"
+        VERBATIM)
+    add_custom_target(${PROJECT_NAME}.nro DEPENDS ${PROJECT_NAME} ${PROJECT_NAME}_forwarder_hbl
         COMMAND ${NX_NACPTOOL_EXE} --create "${PROJECT_DISPLAY_NAME}" "${PROJECT_AUTHOR}" "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_ALTER}" ${PROJECT_NAME}.nacp --titleid=${PROJECT_TITLEID}
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_RESOURCES} ${CMAKE_BINARY_DIR}/resources
         COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_BINARY_DIR}/resources/font/switch_icons.ttf
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/resources/forwarder
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/forwarder/hbl/hbl.nso ${CMAKE_BINARY_DIR}/resources/forwarder/main
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/forwarder/hbl/hbl.npdm ${CMAKE_BINARY_DIR}/resources/forwarder/main.npdm
         COMMAND ${NX_ELF2NRO_EXE} ${PROJECT_NAME}.elf ${PROJECT_NAME}.nro --icon=${PROJECT_ICON} --nacp=${PROJECT_NAME}.nacp --romfsdir=${CMAKE_BINARY_DIR}/resources
     )
 endif ()

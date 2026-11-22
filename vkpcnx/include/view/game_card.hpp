@@ -15,10 +15,17 @@ public:
     std::string pictureUrl;
     int launcherId = 0; // game_launchers[].id / current_launcher, used for queue/run
     bool gamepadSupport = false;
+    // Shown in the details dialog (all of it comes with the catalog reply)
+    std::string description; // long_descr, else short_descr
+    std::string genres;
+    std::string publishers;
+    int ageLimit = 0;
   };
   void setGame(Game game);
   // Drops the pending cover load (the card is being recycled / scrolled away)
   void cancelImageLoad();
+  // + on the card: cover, description and the "Play" / "Add to home screen" buttons
+  void openDetails();
 
 private:
   BRLS_BIND(brls::Image, image, "game_card/image");

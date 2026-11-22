@@ -22,16 +22,51 @@ jobs:
           dkp-pacman -Sy --noconfirm --needed \
             switch-curl switch-zlib switch-libopus switch-ffmpeg switch-libwebp \
             switch-glfw switch-mesa switch-libdrm_nouveau
+      - name: Install ccache
+        # Optional: without it the build is just slower
+        continue-on-error: true
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq ccache jq zstd curl
+      - name: Restore compiler cache
+        # See scripts/ci-cache.sh: a cache asset on the "ci-cache" pre-release,
+        # because tag builds can't share actions/cache entries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ./scripts/ci-cache.sh restore
       - name: Build
-        run: ./scripts/build-switch.sh
+        # Every compile (the host protoc too, it is what the build waits on
+        # longest) goes through ccache; CMake picks the launcher up from the
+        # environment in all sub-projects. Paths and mtimes differ on each
+        # checkout, hence the base dir and the sloppiness.
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 1500M
+          CCACHE_SLOPPINESS: include_file_mtime,time_macros
+        run: |
+          if command -v ccache >/dev/null; then
+            export CMAKE_C_COMPILER_LAUNCHER=ccache CMAKE_CXX_COMPILER_LAUNCHER=ccache
+            ccache --zero-stats
+          fi
+          ./scripts/build-switch.sh
+          if command -v ccache >/dev/null; then ccache --show-stats; fi
+      - name: Save compiler cache
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: ./scripts/ci-cache.sh save
       - name: Collect release files
         # The .nro carries no debug info; the ELF it was made from does, and
-        # its build id is the Module Id in Atmosphère crash reports. Each ELF
-        # ships as a single .elf.gz next to its .nro
+        # its build id is the Module Id in Atmosphère crash reports. The ELF
+        # ships as a single .elf.gz next to the .nro (gzip -3: ~5x faster than
+        # -9 for a few percent more size)
         run: |
           mkdir release
           cp build-switch/vkpcnx.nro release/vkpcnx.nro
-          gzip -9 -c build-switch/vkpcnx.elf > release/vkpcnx-switch-symbols.elf.gz
+          gzip -3 -c build-switch/vkpcnx.elf > release/vkpcnx-switch-symbols.elf.gz
       - name: Draft release
         uses: softprops/action-gh-release@v3
         with:
@@ -43,7 +78,6 @@ jobs:
             **Скопируйте файл `vkpcnx.nro` в папку `switch` на SD-карте вашего Nintendo Switch, а затем запустите "VK Play Cloud NX" через hbmenu**
 
             - `vkpcnx.nro` — релизная сборка, **скачивайте её**
-            - `vkpcnx-debug.nro` — отладочная сборка
 
             Сборка выполнена через GitHub Actions: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           fail_on_unmatched_files: true

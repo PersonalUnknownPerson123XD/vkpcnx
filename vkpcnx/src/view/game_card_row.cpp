@@ -40,6 +40,18 @@ void GameCardRow::setGames(const std::vector<nlohmann::json> &games) {
                !game["game_launchers"].empty())
         gameStruct.launcherId = game["game_launchers"][0].value("id", 0);
 
+      auto str = [&game](const char *key) -> std::string {
+        auto it = game.find(key);
+        return it != game.end() && it->is_string() ? it->get<std::string>() : std::string();
+      };
+      gameStruct.description = str("long_descr");
+      if (gameStruct.description.empty())
+        gameStruct.description = str("short_descr");
+      gameStruct.genres = str("genre_descr");
+      gameStruct.publishers = str("publishers");
+      if (game.contains("age_limit") && game["age_limit"].is_number_integer())
+        gameStruct.ageLimit = game["age_limit"].get<int>();
+
       cards[i]->setGame(gameStruct);
       cards[i]->setVisibility(brls::Visibility::VISIBLE);
     } else {
