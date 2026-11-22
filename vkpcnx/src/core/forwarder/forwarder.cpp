@@ -10,9 +10,11 @@
 #include "extern/stb_image_write.h"
 
 #include <borealis.hpp>
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <regex>
 #include <switch.h>
 #include <vector>
 
@@ -85,7 +87,9 @@ void jpegSink(void *ctx, void *data, int size) {
 // Area-averaged resize of the centered square of an RGB image to 256x256
 Bytes squareIcon(const unsigned char *rgb, int w, int h) {
   const int side = std::min(w, h);
-  const int x0 = (w - side) / 2, y0 = (h - side) / 2;
+  // Tall posters (aspect > 1.4: Steam capsules) keep their top, where the logo is
+  const bool pinTop = h > w * 14 / 10;
+  const int x0 = (w - side) / 2, y0 = pinTop ? 0 : (h - side) / 2;
   constexpr int N = 256;
   Bytes out(N * N * 3);
   for (int y = 0; y < N; y++) {
@@ -136,20 +140,55 @@ bool encodeIcon(const std::string &imageBytes, Bytes &jpeg) {
   return false;
 }
 
-// The cover if it can be fetched, else the app's own icon
-bool makeIcon(const std::vector<std::string> &urls, Bytes &jpeg, bool &usedCover) {
-  usedCover = false;
-  for (const auto &url : urls) {
-    if (url.empty())
-      continue;
-    auto response = Http::get(url);
-    if (response.ok() && encodeIcon(response.body, jpeg)) {
-      usedCover = true;
-      return true;
-    }
-    brls::Logger::warning("forwarder: icon source failed: {}", url);
+// Steam app id of the game: from the catalog's buy link, else a store search by exact name
+int findSteamAppId(const Request &req) {
+  if (req.steamAppId > 0)
+    return req.steamAppId;
+  auto response = Http::get(
+    "https://store.steampowered.com/api/storesearch/?l=english&cc=us&term=" + Http::urlEncode(req.name)
+  );
+  if (!response.ok())
+    return 0;
+  auto lower = [](std::string t) {
+    std::transform(t.begin(), t.end(), t.begin(), [](unsigned char c) { return std::tolower(c); });
+    return t;
+  };
+  try {
+    auto j = nlohmann::json::parse(response.body);
+    for (const auto &item : j.value("items", nlohmann::json::array()))
+      if (item.value("type", "") == "app" && lower(item.value("name", "")) == lower(req.name))
+        return item.value("id", 0);
+  } catch (const std::exception &) {
   }
-  return readFile(BRLS_ASSET("icon/icon.jpg"), jpeg) && !jpeg.empty() && jpeg.size() <= kMaxIconBytes;
+  return 0;
+}
+
+bool tryIcon(const std::string &url, Bytes &jpeg) {
+  if (url.empty())
+    return false;
+  auto response = Http::get(url);
+  if (response.ok() && encodeIcon(response.body, jpeg)) {
+    brls::Logger::info("forwarder: icon from {}", url);
+    return true;
+  }
+  brls::Logger::warning("forwarder: icon source failed: {}", url);
+  return false;
+}
+
+// Icon sources, best first: the catalog's vertical poster, the Steam library
+// capsule, the banner (centre-cropped), the app's own icon
+void makeIcon(const Request &req, Bytes &jpeg) {
+  if (tryIcon(req.verticalUrl, jpeg))
+    return;
+  if (int appId = findSteamAppId(req); appId > 0) {
+    const std::string base = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/" +
+                             std::to_string(appId) + "/library_600x900";
+    if (tryIcon(base + "_2x.jpg", jpeg) || tryIcon(base + ".jpg", jpeg))
+      return;
+  }
+  if (tryIcon(req.coverUrl, jpeg))
+    return;
+  jpeg.clear();
 }
 
 // ---- ns application manager: the two commands libnx doesn't wrap ------------------
@@ -237,13 +276,10 @@ Outcome install(const Request &req, const std::function<void(const std::string &
 
   // --- inputs
   Bytes icon;
-  bool usedCover = false;
-  {
-    std::vector<std::string> urls = req.iconUrls;
-    urls.push_back(req.coverUrl);
-    if (!makeIcon(urls, icon, usedCover))
-      return {false, "Ярлык не добавлен: нет значка"};
-  }
+  makeIcon(req, icon);
+  if (icon.empty() &&
+      (!readFile(BRLS_ASSET("icon/icon.jpg"), icon) || icon.empty() || icon.size() > kMaxIconBytes))
+    return {false, "Ярлык не добавлен: нет значка"};
 
   Bytes loaderMain, loaderNpdm;
   if (!readFile(BRLS_ASSET("forwarder/main"), loaderMain) || !readFile(BRLS_ASSET("forwarder/main.npdm"), loaderNpdm) ||

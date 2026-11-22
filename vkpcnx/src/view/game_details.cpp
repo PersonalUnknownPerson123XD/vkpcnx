@@ -45,6 +45,8 @@ void startInstall(const GameCard::Game &game) {
   request.launcherId = game.launcherId;
   request.name = game.name;
   request.coverUrl = game.pictureUrl;
+  request.verticalUrl = game.pictureVerticalUrl;
+  request.steamAppId = game.steamAppId;
 
   // The shortcut starts vkpcnx again with the game's ids; the name and cover
   // ride along (url-encoded) so the queue screen can show them right away

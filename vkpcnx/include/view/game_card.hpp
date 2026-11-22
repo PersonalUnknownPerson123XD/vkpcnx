@@ -13,6 +13,8 @@ public:
     int id = 0;
     std::string name;
     std::string pictureUrl;
+    std::string pictureVerticalUrl; // picture_vertical, for the HOME shortcut icon
+    int steamAppId = 0;             // from the Steam buy link, when the catalog has one
     int launcherId = 0; // game_launchers[].id / current_launcher, used for queue/run
     bool gamepadSupport = false;
     // Shown in the details dialog (all of it comes with the catalog reply)

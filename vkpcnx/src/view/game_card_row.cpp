@@ -1,4 +1,6 @@
 #include "view/game_card_row.hpp"
+
+#include <regex>
 #include "view/game_card.hpp"
 #include <algorithm>
 
@@ -31,6 +33,22 @@ void GameCardRow::setGames(const std::vector<nlohmann::json> &games) {
       gameStruct.name = game.at("name").get<std::string>();
       gameStruct.pictureUrl =
         game.contains("picture") && game["picture"].is_string() ? game["picture"].get<std::string>() : "";
+      if (game.contains("picture_vertical") && game["picture_vertical"].is_string())
+        gameStruct.pictureVerticalUrl = game["picture_vertical"].get<std::string>();
+      if (game.contains("game_launchers") && game["game_launchers"].is_array()) {
+        static const std::regex steamApp("/app/(\\d+)");
+        for (const auto &l : game["game_launchers"]) {
+          auto link = l.find("buy_link");
+          std::smatch m;
+          if (link != l.end() && link->is_string()) {
+            std::string text = link->get<std::string>();
+            if (std::regex_search(text, m, steamApp)) {
+              gameStruct.steamAppId = std::stoi(m[1].str());
+              break;
+            }
+          }
+        }
+      }
       gameStruct.gamepadSupport = game.contains("gamepad_support") && game["gamepad_support"].is_boolean()
         ? game["gamepad_support"].get<bool>()
         : false;
