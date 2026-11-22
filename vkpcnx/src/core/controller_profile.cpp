@@ -24,6 +24,64 @@ const char *const kTargetNames[T_COUNT] = {
   "Крестовина вверх", "Крестовина вниз", "Крестовина влево", "Крестовина вправо",
 };
 
+const char *const kSourceShort[S_COUNT] = {
+  "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "−", "+", "L3", "R3", "↑", "↓", "←", "→",
+};
+
+const char *const kTargetShort[T_COUNT] = {
+  "A", "B", "X", "Y", "LB", "RB", "Back", "Start", "L3", "R3", "LT", "RT", "↑", "↓", "←", "→",
+};
+
+const char *presetName(Preset p) {
+  switch (p) {
+  case Preset::Nintendo:
+    return "Стандарт";
+  case Preset::Xbox:
+    return "Xbox";
+  case Preset::SwapSticks:
+    return "Стики ↔";
+  case Preset::Southpaw:
+    return "Южанин";
+  case Preset::LeftHanded:
+    return "Левша";
+  default:
+    return "";
+  }
+}
+
+void applyPreset(Profile &profile, Preset p) {
+  switch (p) {
+  case Preset::Nintendo:
+    profile.fillLayout(true);
+    profile.swapSticks = false;
+    break;
+  case Preset::Xbox:
+    profile.fillLayout(false);
+    profile.swapSticks = false;
+    break;
+  case Preset::SwapSticks:
+    // Keep the current button map; only swap the sticks
+    profile.swapSticks = true;
+    break;
+  case Preset::Southpaw:
+    // Nintendo layout, movement on the right stick (common FPS)
+    profile.fillLayout(true);
+    profile.swapSticks = true;
+    break;
+  case Preset::LeftHanded:
+    // Face buttons and bumpers mirrored, sticks swapped
+    profile.fillLayout(true);
+    profile.swapSticks = true;
+    std::swap(profile.map[S_A], profile.map[S_Y]);
+    std::swap(profile.map[S_B], profile.map[S_X]);
+    std::swap(profile.map[S_L], profile.map[S_R]);
+    std::swap(profile.map[S_ZL], profile.map[S_ZR]);
+    break;
+  default:
+    break;
+  }
+}
+
 namespace {
 std::atomic<uint32_t> g_revision{1};
 

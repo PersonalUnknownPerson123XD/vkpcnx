@@ -59,6 +59,8 @@ enum Source : int {
 
 extern const char *const kSourceNames[S_COUNT];
 extern const char *const kTargetNames[T_COUNT]; // Xbox names, for the UI
+extern const char *const kSourceShort[S_COUNT]; // compact Switch labels
+extern const char *const kTargetShort[T_COUNT]; // compact Xbox labels
 
 struct Profile {
   std::array<int8_t, S_COUNT> map{}; // Target per Source
@@ -80,6 +82,11 @@ struct Profile {
 
   bool operator==(const Profile &o) const;
 };
+
+// Named layout presets (only the button map + stick flags they mention)
+enum class Preset : int { Nintendo = 0, Xbox, SwapSticks, Southpaw, LeftHanded, Count };
+const char *presetName(Preset p);
+void applyPreset(Profile &profile, Preset p);
 
 // Both sticks after the profile's options (dead zone, swap, Y inversion); all values in [-1, 1]
 void applySticks(
