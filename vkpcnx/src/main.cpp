@@ -64,6 +64,22 @@ int parseInt(std::string_view v) {
 }
 } // namespace
 
+#ifdef __SWITCH__
+namespace {
+std::atomic<bool> g_exitFinished{false};
+void exitWatchdog(void *) {
+  for (int i = 0; i < 60 && !g_exitFinished; i++)
+    svcSleepThread(100ULL * 1000 * 1000);
+  if (g_exitFinished)
+    return;
+  brls::Logger::error("exit: watchdog - UI teardown stuck for 6 s, forcing exit");
+  vkpcnx::diag::flushLogging();
+  appletUnlockExit();
+  svcExitProcess();
+}
+} // namespace
+#endif
+
 int main(int argc, char *argv[]) {
   // First: everything below may log, and crashes need the log file open
   vkpcnx::diag::initLogging(argc, argv);
@@ -73,6 +89,8 @@ int main(int argc, char *argv[]) {
   brls::Logger::info("exec path: {}", argv[0] ? argv[0] : "(null)");
 #ifdef __SWITCH__
   vkpcnx::platform::logNetworkStartup();
+  // Single-threaded here; briefly closes the sm: session (see saltynx_api.h)
+  vkpcnx::nxfps::attachEarly();
 #endif
 #ifdef VKPCNX_HAS_DEBUG_KEYS
   new vkpcnx::utils::DebugKeyListener();
@@ -148,21 +166,20 @@ int main(int argc, char *argv[]) {
     brls::Logger::info("exit: Application::exit starting (tearing down UI)");
     vkpcnx::diag::flushLogging();
 #ifdef __SWITCH__
-    // Teardown stopped dead after "delete AppletFrame main/root" in harica15
-    // logs: the OS then force-kills us (error screen). If the UI/threads
-    // still haven't finished in 6 s, release the exit lock and leave ourselves.
-    static std::atomic<bool> exitFinished{false};
-    brls::Application::getExitDoneEvent()->subscribe([] { exitFinished = true; });
-    std::thread([] {
-      for (int i = 0; i < 60 && !exitFinished; i++)
-        svcSleepThread(100ULL * 1000 * 1000);
-      if (exitFinished)
-        return;
-      brls::Logger::error("exit: watchdog — UI teardown stuck for 6 s, forcing exit");
-      vkpcnx::diag::flushLogging();
-      appletUnlockExit();
-      svcExitProcess();
-    }).detach();
+    // harica15/16 logs ended silently after "delete AppletFrame main/root";
+    // the OS then force-kills us (error screen). If the UI/threads still
+    // haven't finished in 6 s, release the exit lock and leave ourselves.
+    // libnx Thread, not std::thread: std::thread::detach() throws ENOSYS
+    // ("Function not implemented") on this libnx, which killed harica17
+    // inside this very handler.
+    g_exitFinished = false;
+    brls::Application::getExitDoneEvent()->subscribe([] { g_exitFinished = true; });
+    static Thread watchdog;
+    Result trc = threadCreate(&watchdog, exitWatchdog, nullptr, nullptr, 0x4000, 0x2C, -2);
+    if (R_SUCCEEDED(trc))
+      trc = threadStart(&watchdog);
+    if (R_FAILED(trc))
+      brls::Logger::warning("exit: watchdog thread failed rc={:#x}", trc);
 #endif
   });
   brls::Application::getExitDoneEvent()->subscribe([] {

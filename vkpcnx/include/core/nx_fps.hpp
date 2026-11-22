@@ -7,6 +7,7 @@
 // this process is an Application (HOME shortcut / title override). Applet
 // launches from hbmenu are invisible to pmdmntGetApplicationProcessId.
 namespace vkpcnx::nxfps {
+void attachEarly(); // SaltySD handshake; call once, early in main(), single-threaded
 void init();
 void tick(); // call once per presented frame / main-loop iteration
 void shutdown();

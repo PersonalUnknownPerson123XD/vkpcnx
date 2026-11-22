@@ -1,5 +1,6 @@
 #ifdef __SWITCH__
 #include <switch.h>
+#include <string.h>
 #include "core/saltynx/ipc.h"
 #include "core/saltynx/saltynx_api.h"
 
@@ -179,18 +180,19 @@ Result vkpcnx_session_usage(s64 *cur, s64 *limit, s64 *peak) {
     return first;
 }
 
-static VkpcnxSaltyEarly g_early = { .magicOffset = -1, .allocOffset = -1 };
-static Thread g_earlyThread;
-static u64 g_earlyBlockSize = 174;
+static VkpcnxSaltyEarly g_early;
 
-static void early_main(void *arg) {
-    (void)arg;
-    VkpcnxSaltyEarly *e = &g_early;
+void vkpcnx_nxfps_attach(VkpcnxSaltyEarly *e, u64 blockSize, int connectTries) {
+    memset(e, 0, sizeof(*e));
+    e->magicOffset = -1;
+    e->allocOffset = -1;
+    e->state = 1;
     e->sessRc = vkpcnx_session_usage(&e->sessCur, &e->sessLimit, &e->sessPeak);
 
-    // Up to ~4 s: SaltySD's loop is 10 ms per turn and can be busy hijacking
-    // our own freshly created process for a moment.
-    Result rc = vkpcnx_SaltySD_ConnectEx(4000, &e->connectFirst, &e->connectLast, &e->attempts);
+    smExit(); // frees the one session this process may hold via named ports
+    e->sessRcNoSm = vkpcnx_session_usage(&e->sessCurNoSm, &e->sessLimitNoSm, &e->sessPeakNoSm);
+
+    Result rc = vkpcnx_SaltySD_ConnectEx(connectTries, &e->connectFirst, &e->connectLast, &e->attempts);
     if (R_SUCCEEDED(rc)) {
         e->handleRc = vkpcnx_SaltySD_GetSharedMemoryHandle(&e->handle);
         if (R_SUCCEEDED(e->handleRc) && e->handle) {
@@ -207,8 +209,8 @@ static void early_main(void *arg) {
                 }
                 if (e->magicOffset < 0) {
                     ptrdiff_t off = -1;
-                    e->availRc = vkpcnx_SaltySD_CheckIfSharedMemoryAvailable(&off, g_earlyBlockSize);
-                    if (R_SUCCEEDED(e->availRc) && off >= 0 && (u64)off + g_earlyBlockSize <= 0x1000)
+                    e->availRc = vkpcnx_SaltySD_CheckIfSharedMemoryAvailable(&off, blockSize);
+                    if (R_SUCCEEDED(e->availRc) && off >= 0 && (u64)off + blockSize <= 0x1000)
                         e->allocOffset = (long)off;
                 }
             }
@@ -216,22 +218,16 @@ static void early_main(void *arg) {
         e->termRc = vkpcnx_SaltySD_Term();
     }
 
-    // Informational: is the InjectServ port (Status Monitor's liveness check) there?
-    e->injectAttempted = 1;
-    e->injectOk = vkpcnx_probe_named_port("InjectServ", 200, &e->injectFirst, &e->injectLast);
-    e->state = 2;
-}
-
-void vkpcnx_nxfps_early_start(u64 blockSize) {
-    if (g_early.state != 0)
-        return;
-    g_early.state = 1;
-    g_earlyBlockSize = blockSize;
-    if (R_FAILED(threadCreate(&g_earlyThread, early_main, NULL, NULL, 0x8000, 0x2C, -2)) ||
-        R_FAILED(threadStart(&g_earlyThread))) {
-        g_early.state = 2;
-        g_early.connectFirst = g_early.connectLast = 0xFFFF;
+    // Reopen sm: for everyone else
+    Result sr = 1;
+    for (int i = 0; i < 200; i++) {
+        sr = smInitialize();
+        if (R_SUCCEEDED(sr))
+            break;
+        svcSleepThread(10 * 1000 * 1000);
     }
+    e->smReinitRc = sr;
+    e->state = 2;
 }
 
 VkpcnxSaltyEarly *vkpcnx_nxfps_early(void) { return &g_early; }

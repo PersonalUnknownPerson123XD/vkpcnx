@@ -231,34 +231,29 @@ bool finishAttach(long magicOff, long allocOff) {
   return true;
 }
 
-void logEarly(const VkpcnxSaltyEarly *e) {
-  if (g_earlyLogged)
-    return;
-  g_earlyLogged = true;
+void logEarly(const VkpcnxSaltyEarly *e, const char *tag) {
   brls::Logger::info(
-    "NX-FPS: early attach (userAppInit): sessions rc={:#x} current={} limit={} peak={}",
-    e->sessRc, (long long)e->sessCur, (long long)e->sessLimit, (long long)e->sessPeak
+    "NX-FPS: {} sessions with sm: open rc={:#x} current={} limit={} peak={}; "
+    "sm: closed rc={:#x} current={} limit={} peak={}",
+    tag, e->sessRc, (long long)e->sessCur, (long long)e->sessLimit, (long long)e->sessPeak,
+    e->sessRcNoSm, (long long)e->sessCurNoSm, (long long)e->sessLimitNoSm,
+    (long long)e->sessPeakNoSm
   );
   brls::Logger::info(
-    "NX-FPS: early SaltySD connect: attempts={} first rc={:#x} last rc={:#x}", e->attempts,
+    "NX-FPS: {} SaltySD connect: attempts={} first rc={:#x} last rc={:#x}", tag, e->attempts,
     e->connectFirst, e->connectLast
   );
   brls::Logger::info(
-    "NX-FPS: early GetSharedMemoryHandle rc={:#x} handle={:#x}; shmemMap rc={:#x} mapped={}; "
-    "MAGIC offset={}; CheckIfSharedMemoryAvailable rc={:#x} offset={}; Term rc={:#x}",
-    e->handleRc, e->handle, e->mapRc, e->mapped, e->magicOffset, e->availRc, e->allocOffset,
-    e->termRc
-  );
-  brls::Logger::info(
-    "NX-FPS: early InjectServ probe ok={} first rc={:#x} last rc={:#x}", e->injectOk,
-    e->injectFirst, e->injectLast
+    "NX-FPS: {} GetSharedMemoryHandle rc={:#x} handle={:#x}; shmemMap rc={:#x} mapped={}; "
+    "MAGIC offset={}; CheckIfSharedMemoryAvailable rc={:#x} offset={}; Term rc={:#x}; "
+    "smInitialize rc={:#x}",
+    tag, e->handleRc, e->handle, e->mapRc, e->mapped, e->magicOffset, e->availRc, e->allocOffset,
+    e->termRc, e->smReinitRc
   );
 }
 
-// Adopt the shared memory the early thread already mapped. true: block ready.
-bool adoptEarly() {
-  VkpcnxSaltyEarly *e = vkpcnx_nxfps_early();
-  logEarly(e);
+// Adopt the shared memory a handshake mapped. true: block ready.
+bool adopt(const VkpcnxSaltyEarly *e) {
   g_earlyAdopted = true;
   if (!e->mapped)
     return false;
@@ -267,67 +262,14 @@ bool adoptEarly() {
   return finishAttach(e->magicOffset, e->allocOffset);
 }
 
-// Late path (main thread, after the process used up many sessions). Never
-// gives up; logs only when the result changes.
+// Retry from the main thread (frame loop). The handshake briefly closes the
+// sm: session, so keep this rare.
 bool tryLate() {
   g_lateAttempts++;
-  Result first = 0, last = 0;
-  int attempts = 0;
-  Result rc = vkpcnx_SaltySD_ConnectEx(100, &first, &last, &attempts);
-  if (R_FAILED(rc)) {
-    if (last != g_lastLateRc || g_lateAttempts == 1) {
-      g_lastLateRc = last;
-      brls::Logger::warning(
-        "NX-FPS: late SaltySD connect failed: attempts={} first rc={:#x} last rc={:#x} "
-        "(attempt #{})",
-        attempts, first, last, g_lateAttempts
-      );
-      logSessions("late");
-      // Control: does any named port connect right now (e.g. sm:)?
-      Result cf = 0, cl = 0;
-      const bool sm = vkpcnx_probe_named_port("sm:", 1, &cf, &cl);
-      Result inj1 = 0, inj2 = 0;
-      const bool inj = vkpcnx_probe_named_port("InjectServ", 20, &inj1, &inj2);
-      brls::Logger::info(
-        "NX-FPS: control probes: sm: ok={} rc={:#x}; InjectServ ok={} first rc={:#x} last rc={:#x}",
-        sm, cl, inj, inj1, inj2
-      );
-    }
-    return false;
-  }
-  g_lastLateRc = 0;
-  brls::Logger::info(
-    "NX-FPS: late SaltySD connected: attempts={} first rc={:#x}", attempts, first
-  );
-
-  Handle remote = 0;
-  rc = vkpcnx_SaltySD_GetSharedMemoryHandle(&remote);
-  brls::Logger::info("NX-FPS: GetSharedMemoryHandle rc=0x{:x} handle={:#x}", rc, remote);
-  if (R_FAILED(rc) || !remote) {
-    vkpcnx_SaltySD_Term();
-    return false;
-  }
-  if (!mapShared(remote)) {
-    vkpcnx_SaltySD_Term();
-    return false;
-  }
-  g_base = reinterpret_cast<uintptr_t>(shmemGetAddr(&g_shmem));
-  long magicOff = -1, allocOff = -1;
-  if (auto *b = findBlock(g_base))
-    magicOff = reinterpret_cast<uintptr_t>(b) - g_base;
-  if (magicOff < 0) {
-    ptrdiff_t offset = -1;
-    rc = vkpcnx_SaltySD_CheckIfSharedMemoryAvailable(&offset, sizeof(NxFpsSharedBlock));
-    brls::Logger::info(
-      "NX-FPS: CheckIfSharedMemoryAvailable rc=0x{:x} offset={}", rc, (long long)offset
-    );
-    if (R_SUCCEEDED(rc) && offset >= 0 &&
-        static_cast<size_t>(offset) + sizeof(NxFpsSharedBlock) <= 0x1000)
-      allocOff = offset;
-  }
-  Result trc = vkpcnx_SaltySD_Term();
-  brls::Logger::info("NX-FPS: late Term rc={:#x}", trc);
-  return finishAttach(magicOff, allocOff);
+  VkpcnxSaltyEarly late;
+  vkpcnx_nxfps_attach(&late, sizeof(NxFpsSharedBlock), 200);
+  logEarly(&late, "late");
+  return adopt(&late);
 }
 
 bool startBeat();
@@ -352,36 +294,30 @@ bool startBeat() {
 
 } // namespace
 
+void attachEarly() {
+  logSessions("before attach");
+  VkpcnxSaltyEarly *e = vkpcnx_nxfps_early();
+  vkpcnx_nxfps_attach(e, sizeof(NxFpsSharedBlock), 1500);
+  logEarly(e, "early");
+}
+
 void init() {
   logProcessContext();
   logSessions("main loop start");
   VkpcnxSaltyEarly *e = vkpcnx_nxfps_early();
-  if (e->state == 2) {
-    if (adoptEarly())
-      startBeat();
-  } else {
-    brls::Logger::info("NX-FPS: early attach still running (state={}), waiting in tick()", e->state);
-  }
+  if (e->state == 2 && adopt(e))
+    startBeat();
+  g_earlyAdopted = true;
   g_lastInitAttempt = armGetSystemTick();
 }
 
 void tick() {
   if (!g_block) {
-    VkpcnxSaltyEarly *e = vkpcnx_nxfps_early();
-    if (!g_earlyAdopted) {
-      if (e->state == 2 || e->state == 0) {
-        if (e->state == 0)
-          g_earlyAdopted = true; // never started (not an Application)
-        else if (adoptEarly()) {
-          startBeat();
-          return;
-        }
-      } else {
-        return; // still connecting
-      }
-    }
+    // Up to 3 slow retries (every 5 s); each one briefly closes sm:
+    if (g_lateAttempts >= 3)
+      return;
     const u64 now = armGetSystemTick();
-    if (now - g_lastInitAttempt < kTicksPerSec * 3)
+    if (now - g_lastInitAttempt < kTicksPerSec * 5)
       return;
     g_lastInitAttempt = now;
     if (tryLate())
@@ -431,6 +367,7 @@ void shutdown() {
 #else
 
 namespace vkpcnx::nxfps {
+void attachEarly() {}
 void init() {}
 void tick() {}
 void shutdown() {}

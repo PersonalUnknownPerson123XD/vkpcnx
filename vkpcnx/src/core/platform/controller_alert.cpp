@@ -77,26 +77,40 @@ const char *padTypeName(HidsysUniquePadType type) {
   }
 }
 
+// Only the first alert of the run logs the hidsys probing; the rest stay quiet.
+bool g_ledVerbose = true;
+
 bool lightPad(const HidsysNotificationLedPattern &pattern, HidsysUniquePadId pad, const char *via) {
   HidsysUniquePadType type{};
   Result typeRc = hidsysGetUniquePadType(pad, &type);
-  // 3 s timeout: long enough for the 4-blink alert, ignored if the API fails
-  Result timeoutRc =
-    hidsysSetNotificationLedPatternWithTimeout(&pattern, pad, 3000000000ULL);
-  Result setRc = hidsysSetNotificationLedPattern(&pattern, pad);
-  const char *name = R_SUCCEEDED(typeRc) ? padTypeName(type) : "?";
-  brls::Logger::info(
-    "LED: via={} pad={:#x} type_rc={:#x} type={} ({}) timeout_rc={:#x} set_rc={:#x}",
-    via, static_cast<unsigned long long>(pad.id), typeRc, static_cast<unsigned>(type), name, timeoutRc,
-    setRc
-  );
+  // The Switch Lite's own pad shows up as a DebugPad (type 4) and rejects both
+  // commands with 0x64aca; its HOME LED is a GPIO line (see LiteLed below).
+  if (R_SUCCEEDED(typeRc) && type == HidsysUniquePadType_DebugPadController) {
+    if (g_ledVerbose)
+      brls::Logger::info(
+        "LED: hidsys pad={:#x} via={} is a DebugPad (type 4), skipped", (unsigned long long)pad.id, via
+      );
+    return false;
+  }
+  // 3 s timeout: long enough for the 4-blink alert
+  Result timeoutRc = hidsysSetNotificationLedPatternWithTimeout(&pattern, pad, 3000000000ULL);
+  Result setRc = R_SUCCEEDED(timeoutRc) ? timeoutRc : hidsysSetNotificationLedPattern(&pattern, pad);
+  if (g_ledVerbose)
+    brls::Logger::info(
+      "LED: hidsys via={} pad={:#x} type_rc={:#x} type={} ({}) timeout_rc={:#x} set_rc={:#x}", via,
+      (unsigned long long)pad.id, typeRc, static_cast<unsigned>(type),
+      R_SUCCEEDED(typeRc) ? padTypeName(type) : "?", timeoutRc, setRc
+    );
   return R_SUCCEEDED(timeoutRc) || R_SUCCEEDED(setRc);
 }
 
+// HOME-button notification LED of Joy-Cons / Pro controllers (hid:sys).
 void applyPattern(const HidsysNotificationLedPattern &pattern) {
   Result rc = hidsysInitialize();
   if (R_FAILED(rc)) {
-    brls::Logger::warning("LED: hidsysInitialize failed rc={:#x}", rc);
+    if (g_ledVerbose)
+      brls::Logger::warning("LED: hidsysInitialize failed rc={:#x}", rc);
+    g_ledVerbose = false;
     return;
   }
   int lit = 0;
@@ -104,30 +118,111 @@ void applyPattern(const HidsysNotificationLedPattern &pattern) {
     HidsysUniquePadId pads[8];
     s32 count = 0;
     Result nrc = hidsysGetUniquePadsFromNpad(npad, pads, 8, &count);
-    if (count > 0 || npad == HidNpadIdType_Handheld || npad == HidNpadIdType_No1)
+    if (g_ledVerbose && (count > 0 || npad == HidNpadIdType_Handheld))
       brls::Logger::info(
         "LED: GetUniquePadsFromNpad id={} rc={:#x} count={}", static_cast<int>(npad), nrc, count
       );
     if (R_FAILED(nrc) || count <= 0)
       continue;
-    for (s32 i = 0; i < count; i++) {
+    for (s32 i = 0; i < count; i++)
       if (lightPad(pattern, pads[i], "npad"))
         lit++;
-    }
   }
-  HidsysUniquePadId all[16];
-  s32 total = 0;
-  Result arc = hidsysGetUniquePadIds(all, 16, &total);
-  brls::Logger::info("LED: GetUniquePadIds rc={:#x} count={}", arc, total);
-  if (R_SUCCEEDED(arc)) {
-    for (s32 i = 0; i < total && i < 16; i++) {
-      if (lightPad(pattern, all[i], "all"))
-        lit++;
-    }
-  }
-  brls::Logger::info("LED: pattern accepted on {} attempt(s)", lit);
+  if (g_ledVerbose)
+    brls::Logger::info("LED: hidsys pattern accepted on {} pad(s)", lit);
+  g_ledVerbose = false;
   hidsysExit();
 }
+
+// Switch Lite: the LED by the HOME button is a plain on/off GPIO line, not a
+// hid:sys controller LED (hid:sys sees the Lite's pad as a DebugPad and
+// answers 0x64aca). Found in marcinsz89/lite-led: gpio device code
+// 0x35000065 (Hoag motherboard notification LED), access mode 3, output;
+// High = lit. Original direction and value are restored afterwards.
+constexpr u32 kLiteGpioDeviceCode = 0x35000065U;
+constexpr u32 kLiteGpioAccessMode = 3U;
+
+bool isLiteModel() {
+  static int cached = -1;
+  if (cached < 0) {
+    SetSysProductModel model = SetSysProductModel_Invalid;
+    Result rc = setsysGetProductModel(&model);
+    cached = R_SUCCEEDED(rc) && model == SetSysProductModel_Hoag ? 1 : 0;
+    brls::Logger::info(
+      "LED: setsysGetProductModel rc={:#x} model={} -> {}", rc, static_cast<int>(model),
+      cached ? "Switch Lite (GPIO LED)" : "not a Lite (hid:sys LED)"
+    );
+  }
+  return cached == 1;
+}
+
+bool g_liteLedLit = false; // we drove it high at some point (guarded by alertMutex)
+
+class LiteLed {
+public:
+  ~LiteLed() { end(); }
+
+  bool begin() {
+    Result rc = gpioInitialize();
+    if (R_FAILED(rc)) {
+      brls::Logger::warning("LED: gpioInitialize rc={:#x}", rc);
+      return false;
+    }
+    gpio_ = true;
+    rc = gpioOpenSession2(&pad_, kLiteGpioDeviceCode, kLiteGpioAccessMode);
+    if (R_FAILED(rc)) {
+      brls::Logger::warning(
+        "LED: gpioOpenSession2({:#x}, {}) rc={:#x}", kLiteGpioDeviceCode, kLiteGpioAccessMode, rc
+      );
+      return false;
+    }
+    open_ = true;
+    Result drc = gpioPadGetDirection(&pad_, &origDir_);
+    Result vrc = gpioPadGetValue(&pad_, &origVal_);
+    haveOrig_ = R_SUCCEEDED(drc) && R_SUCCEEDED(vrc);
+    Result src = gpioPadSetDirection(&pad_, GpioDirection_Output);
+    brls::Logger::info(
+      "LED: gpio open ok; direction rc={:#x} dir={}; value rc={:#x} val={}; set output rc={:#x}", drc,
+      static_cast<int>(origDir_), vrc, static_cast<int>(origVal_), src
+    );
+    return R_SUCCEEDED(src);
+  }
+
+  void set(bool on) {
+    if (!open_)
+      return;
+    Result rc = gpioPadSetValue(&pad_, on ? GpioValue_High : GpioValue_Low);
+    if (on)
+      g_liteLedLit = true;
+    if (R_FAILED(rc) || !logged_) {
+      brls::Logger::info("LED: gpio set {} rc={:#x}", on ? "high" : "low", rc);
+      logged_ = true;
+    }
+  }
+
+  void end() {
+    if (open_) {
+      Result vrc = gpioPadSetValue(&pad_, haveOrig_ ? origVal_ : GpioValue_Low);
+      Result drc = haveOrig_ ? gpioPadSetDirection(&pad_, origDir_) : 0;
+      gpioPadClose(&pad_);
+      open_ = false;
+      brls::Logger::info("LED: gpio restore value rc={:#x} direction rc={:#x}", vrc, drc);
+    }
+    if (gpio_) {
+      gpioExit();
+      gpio_ = false;
+    }
+  }
+
+private:
+  GpioPadSession pad_{};
+  GpioDirection origDir_ = GpioDirection_Output;
+  GpioValue origVal_ = GpioValue_Low;
+  bool haveOrig_ = false;
+  bool open_ = false;
+  bool gpio_ = false;
+  bool logged_ = false;
+};
 
 // Vibration handles of every connected pad. Switch Lite rumble goes through
 // HidNpadIdType_Handheld + NpadHandheld (confirmed working on the user's Lite).
@@ -204,6 +299,9 @@ void runAlert(unsigned gen) {
       "ControllerAlert: no vibration devices (handheld style 0x{:x})",
       hidGetNpadStyleSet(HidNpadIdType_Handheld)
     );
+  const bool lite = isLiteModel();
+  LiteLed liteLed;
+  const bool liteOk = lite && liteLed.begin();
   auto pattern = blinkPattern();
   auto start = std::chrono::steady_clock::now();
   using std::chrono::milliseconds;
@@ -216,7 +314,10 @@ void runAlert(unsigned gen) {
       if (generation != gen)
         return;
       sendAll(devices, kBuzz);
-      applyPattern(pattern);
+      if (liteOk)
+        liteLed.set(true);
+      else if (!lite)
+        applyPattern(pattern);
     }
     std::this_thread::sleep_until(blink + milliseconds(kBuzzMs));
     {
@@ -224,6 +325,8 @@ void runAlert(unsigned gen) {
       if (generation != gen)
         return;
       sendAll(devices, kStill);
+      if (liteOk)
+        liteLed.set(false);
     }
   }
 }
@@ -243,6 +346,15 @@ void clearControllerAlert() {
   std::lock_guard<std::mutex> lock(alertMutex);
   ++generation;
   sendAll(vibrationDevices(), kStill);
+  if (isLiteModel()) {
+    if (g_liteLedLit) {
+      LiteLed led;
+      if (led.begin())
+        led.set(false);
+      g_liteLedLit = false;
+    }
+    return;
+  }
   HidsysNotificationLedPattern p;
   std::memset(&p, 0, sizeof p); // all zero = off
   applyPattern(p);
