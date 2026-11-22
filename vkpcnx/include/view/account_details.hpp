@@ -22,10 +22,10 @@ public:
       renderAccountDetails(account);
     });
 
-    if (accountInfo.get()->empty()) {
+    if (!accountInfo.get() || accountInfo.get()->empty()) {
       accountInfo.fetch();
     } else {
-      renderAccountDetails(accountInfo.get());
+      renderAccountDetails(*accountInfo.get());
     }
 
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {

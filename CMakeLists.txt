@@ -4,6 +4,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(BOREALIS_LIBRARY ${CMAKE_CURRENT_SOURCE_DIR}/library/borealis/library)
 
+# Fixes for the borealis submodule (see cmake/patches/borealis). Idempotent.
+execute_process(
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/library/borealis
+        -DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/borealis
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatches.cmake
+    RESULT_VARIABLE BOREALIS_PATCH_RESULT)
+if (NOT BOREALIS_PATCH_RESULT EQUAL 0)
+    message(FATAL_ERROR "failed to patch library/borealis")
+endif ()
+
 # build options
 include(${BOREALIS_LIBRARY}/cmake/commonOption.cmake)
 

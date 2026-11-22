@@ -46,13 +46,18 @@ void MainActivity::fetchMoreGames(vkpcnx::GamesDataSource::MoreGamesCallback cb)
   this->page++;
 
   vkpcnx::utils::runDetached([cb = std::move(cb), this] {
-    auto &account = AccountInfo::instance().get();
+    const auto &account = AccountInfo::instance().get();
     auto params =
       VKPCAPI::QueryParams{{"page", std::to_string(page)}, {"pageSize", "24"}, {"o", "-priority"}};
 
     // TODO: indicate on main screen if user has no plan
-    if (account->contains("plan") && !account->at("plan").is_null()) {
-      params["plan_family_slug"] = account->at("plan").at("plan_family").get<std::string>();
+    try {
+      if (account && account->is_object() && account->contains("plan") &&
+          account->at("plan").is_object()) {
+        params["plan_family_slug"] = account->at("plan").at("plan_family").get<std::string>();
+      }
+    } catch (const nlohmann::json::exception &e) {
+      brls::Logger::warning("MainActivity: no plan family in account: {}", e.what());
     }
 
     auto games = VKPCAPI::indexGames(params);

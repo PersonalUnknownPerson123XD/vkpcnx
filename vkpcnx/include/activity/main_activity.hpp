@@ -3,6 +3,7 @@
 #include "view/games_data_source.hpp"
 #include "view/title_bar.hpp"
 #include <borealis.hpp>
+#include <memory>
 
 class MainActivity : public vkpcnx::CustomTitlebarActivity {
 public:
@@ -23,13 +24,14 @@ public:
     if (accountInfo.get()) {
       renderGamesList();
     } else {
-      brls::Event<const nlohmann::json &>::Subscription accountInfoSubTemp =
-        accountInfo.updated().subscribe(
-          [this, &accountInfo, &accountInfoSubTemp](const nlohmann::json &account) {
-            renderGamesList();
-            accountInfo.updated().unsubscribe(accountInfoSubTemp);
-          }
-        );
+      // The subscription handle must outlive this function (the callback runs
+      // on a later fetch), so it lives on the heap rather than on this stack
+      using Sub = brls::Event<const nlohmann::json &>::Subscription;
+      auto sub = std::make_shared<Sub>();
+      *sub = accountInfo.updated().subscribe([this, sub](const nlohmann::json &account) {
+        renderGamesList();
+        AccountInfo::instance().updated().unsubscribe(*sub);
+      });
     }
   }
 

@@ -1,0 +1,63 @@
+diff --git a/library/include/borealis/core/application.hpp b/library/include/borealis/core/application.hpp
+index e18a918..c8ec6b1 100644
+--- a/library/include/borealis/core/application.hpp
++++ b/library/include/borealis/core/application.hpp
+@@ -141,6 +141,14 @@ class Application
+      */
+     static void giveFocus(View* view);
+ 
++    /**
++     * Forgets `view` as the current focus and as a saved focus (focus stack).
++     * Called from ~View: giveFocus(nullptr) is a no-op, which left
++     * currentFocus (and the focus stack) pointing at freed views, e.g. a
++     * dismissed dialog's button, and the next hints refresh read freed memory.
++     */
++    static void dropFocus(View* view);
++
+     inline static Style getStyle()
+     {
+         return brls::getStyle();
+diff --git a/library/lib/core/application.cpp b/library/lib/core/application.cpp
+index 154f0d8..e8d2cda 100644
+--- a/library/lib/core/application.cpp
++++ b/library/lib/core/application.cpp
+@@ -801,6 +801,22 @@ void Application::giveFocus(View* view)
+     }
+ }
+ 
++void Application::dropFocus(View* view)
++{
++    if (!view)
++        return;
++
++    // No onFocusLost()/events: the view is already being destroyed
++    if (Application::currentFocus == view)
++        Application::currentFocus = nullptr;
++    if (Application::repetitionOldFocus == view)
++        Application::repetitionOldFocus = nullptr;
++
++    Application::focusStack.erase(
++        std::remove(Application::focusStack.begin(), Application::focusStack.end(), view),
++        Application::focusStack.end());
++}
++
+ bool Application::popActivity(TransitionAnimation animation, std::function<void(void)> cb, bool free)
+ {
+     if (Application::activitiesStack.size() <= 1) // never pop the first activity
+diff --git a/library/lib/core/view.cpp b/library/lib/core/view.cpp
+index 3be220f..3b74d19 100644
+--- a/library/lib/core/view.cpp
++++ b/library/lib/core/view.cpp
+@@ -1482,9 +1482,9 @@ View::~View()
+         this->parentUserdata = nullptr;
+     }
+ 
+-    // Focus sanity check
+-    if (Application::getCurrentFocus() == this)
+-        Application::giveFocus(nullptr);
++    // Focus sanity check: giveFocus(nullptr) doesn't clear anything, so drop
++    // this view from the focus pointers explicitly
++    Application::dropFocus(this);
+ 
+     Application::tryDeinitFirstResponder(this);
+     for (GestureRecognizer* recognizer : this->gestureRecognizers)
