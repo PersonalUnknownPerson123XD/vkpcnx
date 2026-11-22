@@ -6,6 +6,12 @@
 #include <mutex>
 #include <thread>
 
+#ifdef __SWITCH__
+#include "core/utils/extra_ca.hpp"
+#include <cstring>
+#include <switch.h>
+#endif
+
 static std::mutex g_mutex;
 static Http::Headers g_defaultHeaders;
 static std::string g_userAgent = "VKPlayCloudNX/1.0";
@@ -69,6 +75,27 @@ void Http::setTimeout(long seconds) {
   g_timeout = seconds;
 }
 
+#ifdef __SWITCH__
+// switch-curl (libnx ssl-service backend) hands the SslContext to this callback
+// before the connection is created. The console's built-in root store lacks
+// the HARICA roots that o2-ext-ac.vkplay.ru chains to, so import them as
+// additional trusted roots. Verification stays on; one cert is imported per
+// call because the ssl service takes a single certificate at a time (and
+// allows at most 71 imported PKIs per context). A failed import is logged
+// and skipped, it must not break connections to hosts the system store knows.
+static CURLcode sslCtxCallback(CURL *, void *sslctx, void *) {
+  auto *ctx = static_cast<SslContext *>(sslctx);
+  for (const char *pem : vkpcnx::utils::kExtraCaPem) {
+    Result rc = sslContextImportServerPki(
+      ctx, pem, static_cast<u32>(strlen(pem)), SslCertificateFormat_Pem, nullptr
+    );
+    if (R_FAILED(rc))
+      brls::Logger::warning("Http: importing extra CA failed: 0x{:X}", rc);
+  }
+  return CURLE_OK;
+}
+#endif
+
 // ---- core ------------------------------------------------------------------
 
 Http::Response Http::perform(
@@ -121,6 +148,9 @@ Http::Response Http::perform(
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res.body);
   curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, writeHeader);
   curl_easy_setopt(curl, CURLOPT_HEADERDATA, &res.headers);
+#ifdef __SWITCH__
+  curl_easy_setopt(curl, CURLOPT_SSL_CTX_FUNCTION, sslCtxCallback);
+#endif
 
   if (body) {
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->c_str());
