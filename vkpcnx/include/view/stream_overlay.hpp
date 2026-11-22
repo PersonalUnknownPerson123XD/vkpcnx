@@ -1,5 +1,6 @@
 #pragma once
 #include "borealis/views/cells/cell_detail.hpp"
+#include "view/controller_profile_dialog.hpp"
 #include "view/stream_overlay/dialog_content.hpp"
 #include "view/stream_overlay/gamepad_mapping_dialog.hpp"
 #include "view/stream_overlay/gamepad_pointer_dialog.hpp"
@@ -49,6 +50,12 @@ public:
       this->openDialog(new GamepadMappingDialog());
       return true;
     });
+    this->controllerProfileCell->registerClickAction([this](auto &&) {
+      // The running game's profile (the global one in the playground); saved and
+      // applied as it is edited
+      openControllerProfileDialog(this->gameId, this->gameName);
+      return true;
+    });
     this->gamepadPointerCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadPointerDialog());
       return true;
@@ -96,6 +103,15 @@ public:
     std::string videoCodecName;
     std::optional<std::string> hwDecoderName;
   };
+
+  // The game whose controller profile the "buttons and sticks" entry edits (0: the global one)
+  void setGame(int id, std::string name) {
+    this->gameId = id;
+    this->gameName = std::move(name);
+    this->controllerProfileCell->setDetailText(
+      id > 0 && controls::hasGameOverride(id) ? "Свой профиль" : "Общий"
+    );
+  }
 
   void setSessionMetrics(SessionMetrics metrics) { this->metrics = metrics; };
 
@@ -168,6 +184,7 @@ private:
   BRLS_BIND(brls::Label, showLessLabel, "stream_overlay/show_less");
 
   BRLS_BIND(brls::DetailCell, gamepadMappingModeCell, "stream_overlay/gamepad_mapping_mode");
+  BRLS_BIND(brls::DetailCell, controllerProfileCell, "stream_overlay/controller_profile");
   BRLS_BIND(brls::DetailCell, gamepadPointerCell, "stream_overlay/gamepad_pointer");
   BRLS_BIND(brls::DetailCell, touchscreenModeCell, "stream_overlay/touchscreen_mode");
 
@@ -183,6 +200,8 @@ private:
   std::function<SessionMetrics()> metricsProvider;
   bool showAllMetrics = false;
   bool playground = false;
+  int gameId = 0;
+  std::string gameName;
 
   std::string lastClock;
   std::string lastBatteryPct;

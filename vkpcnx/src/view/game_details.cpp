@@ -4,6 +4,7 @@
 #include "core/forwarder/forwarder.hpp"
 #include "core/http.hpp"
 #include "core/utils/thread.hpp"
+#include "view/controller_profile_dialog.hpp"
 
 #include <atomic>
 
@@ -163,9 +164,9 @@ void openGameDetails(const GameCard::Game &game) {
   dialog->addButton("Играть", [game] {
     brls::Application::pushActivity(new LaunchQueueActivity(game));
   });
+  dialog->addButton("Управление", [game] { openControllerProfileDialog(game.id, game.name); });
   if (forwarder::supported() && game.launcherId != 0)
     dialog->addButton("Добавить на главный экран", [game] { confirmInstall(game); });
-  dialog->addButton("Закрыть", [] {});
   dialog->setCancelable(true);
   dialog->getAppletFrame()->setWidth(860);
   dialog->open();

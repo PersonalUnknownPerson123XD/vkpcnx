@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "core/controller_profile.hpp"
 #include "core/stream/input_sink.hpp"
 #include "core/stream/play_url.hpp"
 #include "core/stream/stream_session.hpp"
@@ -25,7 +26,8 @@
 //  - left Ctrl + left Alt (desktop): release the mouse; click to capture again
 //
 // Overlay "controls" settings (core/settings.hpp, /controls/*):
-//  - mapping_mode: literal | positional (A<->B, X<->Y swapped for Joy-Con)
+//  - mapping_mode: literal | positional (A<->B, X<->Y swapped for Joy-Con);
+//    the full remapping lives in core/controller_profile.hpp (global + per game)
 //  - gamepad_pointer: pads drive the mouse instead of the virtual Xbox pad,
 //    see pollGamepadPointer()
 //  - touchscreen_mode: trackpad | touchscreen, see pollTouch()
@@ -140,6 +142,9 @@ private:
   brls::RawMouseState lastMouse_{};
   float wheelAccum_ = 0; // fractional wheel offsets (trackpads, smooth wheels)
   bool padConnected_[4] = {false, false, false, false};
+  // Button map / sticks of the running game (see controls::loadEffective)
+  vkpcnx::controls::Profile profile_;
+  uint32_t profileRevision_ = 0;
   bool padButtons_[4][16] = {};
   uint32_t padPov_[4] = {0, 0, 0, 0};
   // brls buttons consumed by a hotkey: not forwarded until physically released

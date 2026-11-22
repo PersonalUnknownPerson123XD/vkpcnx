@@ -1,4 +1,5 @@
 #include "activity/stream_activity.hpp"
+#include "core/controller_profile.hpp"
 #include "core/account_info.hpp"
 
 #include <algorithm>
@@ -931,8 +932,14 @@ StreamActivity::PadAction StreamActivity::pollGamepads(brls::InputManager *input
   // Gamepads (§9.3): all treated as XInput, index < 4.
   // "positional" mapping (overlay setting) sends the button at the same
   // physical position on the emulated Xbox pad, i.e. A<->B and X<->Y swapped.
-  const bool positional =
-    settings.get<std::string>("/controls/mapping_mode", "positional") == "positional";
+  // The button map, sticks and triggers come from the controller profile (the
+  // game's own, else the global one); layouts are presets of it. Reloaded when
+  // something saved a profile since (the overlay editor, live).
+  if (profileRevision_ != controls::revision()) {
+    profileRevision_ = controls::revision();
+    profile_ = controls::loadEffective(game_.id);
+  }
+  const controls::Profile &profile = profile_;
   // "gamepad pointer": pads drive the mouse and send no gamepad events at all
   const bool pointerMode = settings.get<bool>("/controls/gamepad_pointer", false);
 
@@ -1037,78 +1044,90 @@ StreamActivity::PadAction StreamActivity::pollGamepads(brls::InputManager *input
       continue;
     }
 
-    struct Map {
-      brls::ControllerButton brls;
-      uint8_t pk;
-    };
-    static const Map literalButtons[] = {
-      {brls::BUTTON_A, pk::PAD_A},
-      {brls::BUTTON_B, pk::PAD_B},
-      {brls::BUTTON_X, pk::PAD_X},
-      {brls::BUTTON_Y, pk::PAD_Y},
-      {brls::BUTTON_LB, pk::PAD_LB},
-      {brls::BUTTON_RB, pk::PAD_RB},
-      {brls::BUTTON_BACK, pk::PAD_BACK},
-      {brls::BUTTON_START, pk::PAD_START},
-      {brls::BUTTON_LSB, pk::PAD_LSTICK},
-      {brls::BUTTON_RSB, pk::PAD_RSTICK},
-    };
-    static const Map positionalButtons[] = {
-      {brls::BUTTON_A, pk::PAD_B},
-      {brls::BUTTON_B, pk::PAD_A},
-      {brls::BUTTON_X, pk::PAD_Y},
-      {brls::BUTTON_Y, pk::PAD_X},
-      {brls::BUTTON_LB, pk::PAD_LB},
-      {brls::BUTTON_RB, pk::PAD_RB},
-      {brls::BUTTON_BACK, pk::PAD_BACK},
-      {brls::BUTTON_START, pk::PAD_START},
-      {brls::BUTTON_LSB, pk::PAD_LSTICK},
-      {brls::BUTTON_RSB, pk::PAD_RSTICK},
-    };
-
     // Axes first, then POV, then buttons (per-frame order of §9.3)
     auto scale = [](float v) -> int32_t {
       v = std::clamp(v, -1.0f, 1.0f);
       return static_cast<int32_t>(v > 0 ? v * 32767 : v * 32768);
     };
-#ifdef __SWITCH__
-    float lt = st.buttons[brls::BUTTON_LT] ? 1.0f : 0.0f;
-    float rt = st.buttons[brls::BUTTON_RT] ? 1.0f : 0.0f;
-#else
-    float lt = (st.axes[brls::LEFT_Z] + 1.0f) / 2.0f;
-    float rt = (st.axes[brls::RIGHT_Z] + 1.0f) / 2.0f;
-    if (st.buttons[brls::BUTTON_LT] && lt < 0.1f)
-      lt = 1.0f;
-    if (st.buttons[brls::BUTTON_RT] && rt < 0.1f)
-      rt = 1.0f;
+
+    // Switch button -> Xbox target through the profile (several sources may feed one target)
+    static const brls::ControllerButton sources[controls::S_COUNT] = {
+      brls::BUTTON_A,  brls::BUTTON_B,  brls::BUTTON_X,  brls::BUTTON_Y,
+      brls::BUTTON_LB, brls::BUTTON_RB, brls::BUTTON_LT, brls::BUTTON_RT,
+      brls::BUTTON_BACK, brls::BUTTON_START, brls::BUTTON_LSB, brls::BUTTON_RSB,
+      brls::BUTTON_UP, brls::BUTTON_DOWN, brls::BUTTON_LEFT, brls::BUTTON_RIGHT,
+    };
+    bool target[controls::T_COUNT] = {};
+    for (int src = 0; src < controls::S_COUNT; src++) {
+      int t = profile.map[src];
+      if (t >= 0 && st.buttons[sources[src]])
+        target[t] = true;
+    }
+
+    // Triggers: ZL/ZR are buttons on the Switch; an analog trigger (desktop pads)
+    // keeps its travel while it is mapped to its own trigger
+    float lt = target[controls::T_TRIGGER_L] ? 1.0f : 0.0f;
+    float rt = target[controls::T_TRIGGER_R] ? 1.0f : 0.0f;
+#ifndef __SWITCH__
+    if (!profile.triggersFull) {
+      float la = (st.axes[brls::LEFT_Z] + 1.0f) / 2.0f;
+      float ra = (st.axes[brls::RIGHT_Z] + 1.0f) / 2.0f;
+      if (profile.map[controls::S_ZL] == controls::T_TRIGGER_L && !st.buttons[brls::BUTTON_LT] && la >= 0.1f)
+        lt = std::max(lt, la);
+      if (profile.map[controls::S_ZR] == controls::T_TRIGGER_R && !st.buttons[brls::BUTTON_RT] && ra >= 0.1f)
+        rt = std::max(rt, ra);
+    }
 #endif
-    ch.gamepadAxis(i, pk::AXIS_X, scale(st.axes[brls::LEFT_X]));
-    ch.gamepadAxis(i, pk::AXIS_Y, scale(st.axes[brls::LEFT_Y]));
-    ch.gamepadAxis(i, pk::AXIS_RX, scale(st.axes[brls::RIGHT_X]));
-    ch.gamepadAxis(i, pk::AXIS_RY, scale(st.axes[brls::RIGHT_Y]));
+
+    float lx, ly, rx, ry;
+    controls::applySticks(
+      profile, st.axes[brls::LEFT_X], st.axes[brls::LEFT_Y], st.axes[brls::RIGHT_X],
+      st.axes[brls::RIGHT_Y], lx, ly, rx, ry
+    );
+    ch.gamepadAxis(i, pk::AXIS_X, scale(lx));
+    ch.gamepadAxis(i, pk::AXIS_Y, scale(ly));
+    ch.gamepadAxis(i, pk::AXIS_RX, scale(rx));
+    ch.gamepadAxis(i, pk::AXIS_RY, scale(ry));
     ch.gamepadAxis(i, pk::AXIS_Z, scale(lt));
     ch.gamepadAxis(i, pk::AXIS_RZ, scale(rt));
 
     uint32_t pov = 0;
-    if (st.buttons[brls::BUTTON_UP])
+    if (target[controls::T_DPAD_UP])
       pov |= pk::POV_N;
-    if (st.buttons[brls::BUTTON_DOWN])
+    if (target[controls::T_DPAD_DOWN])
       pov |= pk::POV_S;
-    if (st.buttons[brls::BUTTON_LEFT])
+    if (target[controls::T_DPAD_LEFT])
       pov |= pk::POV_W;
-    if (st.buttons[brls::BUTTON_RIGHT])
+    if (target[controls::T_DPAD_RIGHT])
       pov |= pk::POV_E;
     if (pov != padPov_[i]) {
       padPov_[i] = pov;
       ch.gamepadPov(i, pov);
     }
 
-    const Map *buttons = positional ? positionalButtons : literalButtons;
-    for (size_t k = 0; k < std::size(literalButtons); k++) {
-      const Map &m = buttons[k];
-      if (playground_ && m.brls == exitButton) // the tester leaves that one out
-        playground_->setExitPadButton(i, m.pk);
-      bool pressed = st.buttons[m.brls];
+    struct PadMap {
+      controls::Target target;
+      uint8_t pk;
+    };
+    static const PadMap padButtons[] = {
+      {controls::T_A, pk::PAD_A},         {controls::T_B, pk::PAD_B},
+      {controls::T_X, pk::PAD_X},         {controls::T_Y, pk::PAD_Y},
+      {controls::T_LB, pk::PAD_LB},       {controls::T_RB, pk::PAD_RB},
+      {controls::T_BACK, pk::PAD_BACK},   {controls::T_START, pk::PAD_START},
+      {controls::T_LSTICK, pk::PAD_LSTICK}, {controls::T_RSTICK, pk::PAD_RSTICK},
+    };
+    if (playground_) {
+      // the tester leaves out the labelled B: tell it which pad button that one became
+      for (int src = 0; src < controls::S_COUNT; src++)
+        if (sources[src] == exitButton) {
+          int t = profile.map[src];
+          for (const PadMap &m : padButtons)
+            if (m.target == t)
+              playground_->setExitPadButton(i, m.pk);
+        }
+    }
+    for (const PadMap &m : padButtons) {
+      bool pressed = target[m.target];
       if (pressed != padButtons_[i][m.pk]) {
         padButtons_[i][m.pk] = pressed;
         ch.gamepadButton(i, m.pk, pressed);
@@ -1671,6 +1690,7 @@ void StreamActivity::showStreamOverlay() {
   content->setSessionMetrics(collectSessionMetrics()); // avoid a blank first frame
   content->setMetricsProvider([this] { return collectSessionMetrics(); });
   content->setDebugOverlayVisible(hudVisible_);
+  content->setGame(playgroundMode_ ? 0 : game_.id, game_.name);
   if (playgroundMode_)
     content->setPlaygroundMode();
   content->onToggleDebugOverlay = [this, content] {

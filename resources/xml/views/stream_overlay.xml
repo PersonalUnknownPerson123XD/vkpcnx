@@ -57,6 +57,7 @@
 
   <brls:Box lineColor="@theme/brls/applet_frame/separator" lineBottom="1px" alpha="0.25"/>
   <brls:DetailCell id="stream_overlay/gamepad_mapping_mode" title="Раскладка контроллера"/>
+  <brls:DetailCell id="stream_overlay/controller_profile" title="Кнопки и стики (профиль игры)"/>
   <brls:DetailCell id="stream_overlay/gamepad_pointer" title="Контроллер как мышь"/>
   <brls:DetailCell id="stream_overlay/touchscreen_mode" title="Режим сенсорного экрана" marginBottom="20"/>
 

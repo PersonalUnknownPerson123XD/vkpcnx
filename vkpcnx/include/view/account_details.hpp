@@ -2,6 +2,7 @@
 #include "core/account_info.hpp"
 #include "core/diag/build_info.hpp"
 #include "core/utils/thread.hpp"
+#include "view/controller_profile_dialog.hpp"
 #include "view/debug_report.hpp"
 #include "view/feedback_qr_dialog.hpp"
 #include "view/stream_overlay/dialog_content.hpp"
@@ -29,6 +30,10 @@ public:
 
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadMappingDialog());
+      return true;
+    });
+    this->controllerProfileCell->registerClickAction([](auto &&) {
+      openControllerProfileDialog(0, "");
       return true;
     });
     this->gamepadPointerCell->registerClickAction([this](auto &&) {
@@ -92,6 +97,7 @@ private:
   BRLS_BIND(brls::Rectangle, serverLoadBar3, "account_details/server_load/bar_3");
 
   BRLS_BIND(brls::DetailCell, gamepadMappingModeCell, "account_details/gamepad_mapping_mode");
+  BRLS_BIND(brls::DetailCell, controllerProfileCell, "account_details/controller_profile");
   BRLS_BIND(brls::DetailCell, gamepadPointerCell, "account_details/gamepad_pointer");
   BRLS_BIND(brls::DetailCell, touchscreenModeCell, "account_details/touchscreen_mode");
   BRLS_BIND(brls::Button, controlsPlaygroundBtn, "account_details/controls_playground");

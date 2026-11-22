@@ -1,5 +1,6 @@
 #include "view/stream_overlay/gamepad_mapping_dialog.hpp"
 #include "borealis/core/view.hpp"
+#include "core/controller_profile.hpp"
 #include "core/settings.hpp"
 
 using namespace brls::literals;
@@ -25,6 +26,8 @@ GamepadMappingDialog::GamepadMappingDialog() {
 
 void GamepadMappingDialog::changeMode(std::string newMode) {
   Settings::instance().set("/controls/mapping_mode", newMode);
+  // Keeps the full profile (button map) in step; sticks and triggers are left alone
+  controls::applyGlobalPreset(newMode == "positional");
   this->renderCurrentMode();
 }
 
