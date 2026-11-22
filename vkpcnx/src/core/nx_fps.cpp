@@ -85,7 +85,18 @@ ptrdiff_t g_offset = -1;
 uintptr_t g_base = 0;
 
 std::atomic<bool> g_beatStop{false};
+std::atomic<bool> g_beatRunning{false};
 std::thread g_beat;
+
+// Status Monitor's CheckIfGameRunning(): finds MAGIC, writes pluginActive=false,
+// sleeps 100 ms, expects true again -> GameRunning. The beat thread sees that
+// false (only it re-arms the flag) and counts it: probes > 0 proves Status
+// Monitor really scans THIS page and found our block.
+std::atomic<uint32_t> g_probeCount{0};
+std::atomic<u64> g_probeFirst{0};
+std::atomic<u64> g_probeLast{0};
+bool g_pmdmnt = false;
+Result g_pmdmntInitRc = 0xFFFFFFFF;
 
 NxFpsSharedBlock *findBlock(uintptr_t base) {
   for (ptrdiff_t off = 0; off + 4 <= 0x1000; off += 4) {
@@ -137,7 +148,8 @@ void writeSample(NxFpsSharedBlock *b, uint32_t delta, float fps) {
   const uint8_t rounded = static_cast<uint8_t>(std::lround(std::clamp(avg, 1.f, 255.f)));
   b->FPS = fps > 0.f ? static_cast<uint8_t>(std::lround(std::clamp(fps, 1.f, 255.f))) : rounded;
   b->API = kApiEgl;
-  b->pluginActive = true;
+  if (!g_beatRunning.load(std::memory_order_relaxed))
+    b->pluginActive = true; // otherwise only the beat thread re-arms it
   b->frameNumber++;
 }
 
@@ -278,15 +290,25 @@ void beatLoop() {
   // Status Monitor sets pluginActive=false and waits 100ms. Keep the flag
   // alive even if the UI thread hitches while Tesla is open.
   while (!g_beatStop.load(std::memory_order_relaxed)) {
-    if (g_block)
-      g_block->pluginActive = true;
-    svcSleepThread(10 * 1000 * 1000ull); // 10 ms
+    if (g_block) {
+      volatile bool *flag = reinterpret_cast<volatile bool *>(&g_block->pluginActive);
+      if (!*flag) { // someone (Status Monitor) cleared it
+        const u64 now = armGetSystemTick();
+        u64 zero = 0;
+        g_probeFirst.compare_exchange_strong(zero, now);
+        g_probeLast.store(now);
+        g_probeCount.fetch_add(1);
+      }
+      *flag = true;
+    }
+    svcSleepThread(2 * 1000 * 1000ull); // 2 ms, well under SM's 100 ms wait
   }
 }
 
 bool startBeat() {
   if (!g_beat.joinable()) {
     g_beatStop = false;
+    g_beatRunning = true;
     g_beat = std::thread(beatLoop);
   }
   return true;
@@ -309,6 +331,11 @@ void init() {
     startBeat();
   g_earlyAdopted = true;
   g_lastInitAttempt = armGetSystemTick();
+  // Status Monitor drops GameRunning as soon as pmdmntGetApplicationProcessId
+  // fails; look at what it will see for us.
+  g_pmdmntInitRc = pmdmntInitialize();
+  g_pmdmnt = R_SUCCEEDED(g_pmdmntInitRc);
+  brls::Logger::info("NX-FPS: pmdmntInitialize rc={:#x}", g_pmdmntInitRc);
 }
 
 void tick() {
@@ -345,16 +372,35 @@ void tick() {
       "NX-FPS: wrote FPS={} FPSavg={:.1f} pluginActive={} frame={} offset={}",
       fps, avg, active, (unsigned long long)frame, (long long)g_offset
     );
+    // What Status Monitor sees of us
+    const uint32_t probes = g_probeCount.load();
+    const u64 first = g_probeFirst.load(), last = g_probeLast.load();
+    u64 appPid = 0, ourPid = 0;
+    Result prc = g_pmdmnt ? pmdmntGetApplicationProcessId(&appPid) : g_pmdmntInitRc;
+    svcGetProcessId(&ourPid, CUR_PROCESS_HANDLE);
+    brls::Logger::info(
+      "NX-FPS: Status Monitor probes seen={} first={} ms ago last={} ms ago ({}); "
+      "pmdmntGetApplicationProcessId rc={:#x} pid={} ours={} match={}",
+      probes, first ? (long long)((now - first) * 1000 / kTicksPerSec) : -1LL,
+      last ? (long long)((now - last) * 1000 / kTicksPerSec) : -1LL,
+      probes ? "SM found our MAGIC" : "SM has not scanned this page",
+      prc, (unsigned long long)appPid, (unsigned long long)ourPid, appPid == ourPid
+    );
   }
 }
 
 void shutdown() {
   g_beatStop = true;
+  g_beatRunning = false;
   if (g_beat.joinable())
     g_beat.join();
   if (g_block)
     g_block->pluginActive = false;
   g_block = nullptr;
+  if (g_pmdmnt) {
+    pmdmntExit();
+    g_pmdmnt = false;
+  }
   if (g_mapped) {
     shmemUnmap(&g_shmem);
     shmemClose(&g_shmem);
