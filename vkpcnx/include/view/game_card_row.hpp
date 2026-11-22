@@ -13,6 +13,7 @@ public:
   static constexpr float height = 220;
 
   brls::View *getDefaultFocus() override;
+  void prepareForReuse() override;
   void onChildFocusGained(brls::View *directChild, brls::View *focusedView) override;
 
 private:

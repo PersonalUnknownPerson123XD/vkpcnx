@@ -19,14 +19,13 @@ public:
     auto &accountInfo = AccountInfo::instance();
 
     accountInfoSub = accountInfo.updated().subscribe([this](const nlohmann::json &account) {
-      renderAccountDetails(account);
+      renderSafely(account);
     });
 
-    if (!accountInfo.get() || accountInfo.get()->empty()) {
-      accountInfo.fetch();
-    } else {
-      renderAccountDetails(*accountInfo.get());
-    }
+    // Show what we have right away, and ask for fresh minutes/tariff either way
+    if (accountInfo.get() && !accountInfo.get()->empty())
+      renderSafely(*accountInfo.get());
+    accountInfo.fetchAsync();
 
     this->gamepadMappingModeCell->registerClickAction([this](auto &&) {
       this->openDialog(new GamepadMappingDialog());
@@ -70,6 +69,15 @@ public:
   }
 
 private:
+  // The views read many fields of the reply; a malformed one must not take the app down
+  void renderSafely(const nlohmann::json &account) {
+    try {
+      renderAccountDetails(account);
+    } catch (const nlohmann::json::exception &e) {
+      brls::Logger::warning("AccountDetails: unexpected account json: {}", e.what());
+    }
+  }
+
   BRLS_BIND(brls::Box, container, "account_details/root");
 
   BRLS_BIND(brls::Image, avatar, "account_details/avatar");

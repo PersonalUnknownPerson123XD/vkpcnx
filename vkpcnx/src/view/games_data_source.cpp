@@ -4,12 +4,26 @@
 namespace vkpcnx {
 GamesDataSource::GamesDataSource(OnNeedMore needMoreCallback) {
   this->needMoreCallback = needMoreCallback;
+  requestFirstPage();
+}
+
+void GamesDataSource::requestFirstPage() {
   this->needMoreCallback([this](GamesList games) {
     this->games = std::move(games);
 
     if (this->recycler)
       this->recycler->reloadData();
   });
+}
+
+void GamesDataSource::reload() {
+  this->games.clear();
+  this->pendingFocusRow.reset();
+  if (this->recycler) {
+    this->recycler->reloadData();
+    this->recycler->setContentOffsetY(0, false);
+  }
+  requestFirstPage();
 }
 
 int GamesDataSource::numberOfRows(brls::RecyclerFrame *recycler, int section) {

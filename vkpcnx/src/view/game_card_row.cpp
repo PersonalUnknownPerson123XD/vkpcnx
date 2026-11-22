@@ -10,6 +10,12 @@ GameCardRow::GameCardRow() {
   this->setWidth(brls::View::AUTO);
 }
 
+// The recycler hands the cell to another row: stop loading the covers it showed
+void GameCardRow::prepareForReuse() {
+  for (auto *card : cards)
+    card->cancelImageLoad();
+}
+
 void GameCardRow::setGames(const std::vector<nlohmann::json> &games) {
   while (cards.size() < games.size()) {
     auto *card = new GameCard();

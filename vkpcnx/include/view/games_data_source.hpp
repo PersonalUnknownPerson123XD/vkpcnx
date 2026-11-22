@@ -1,6 +1,7 @@
 #pragma once
 #include <borealis.hpp>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <vector>
 
 namespace vkpcnx {
@@ -16,6 +17,9 @@ public:
 
   float heightForRow(brls::RecyclerFrame *recycler, brls::IndexPath index) override;
 
+  // Drops every game and asks for the first page again (new search / refresh)
+  void reload();
+
 private:
   static constexpr int columns = 4;
 
@@ -25,5 +29,6 @@ private:
   std::optional<brls::IndexPath> pendingFocusRow;
 
   void reloadRecycler();
+  void requestFirstPage();
 };
 }; // namespace vkpcnx

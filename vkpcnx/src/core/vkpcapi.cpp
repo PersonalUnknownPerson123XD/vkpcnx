@@ -12,18 +12,36 @@
 
 static constexpr int MAX_NETWORK_RETRIES = 3;
 
-std::string VKPCAPI::ApiException::userMessage() const {
+std::string VKPCAPI::ApiException::messageFromBody(long status, const nlohmann::json &body) {
   if (body.is_object()) {
-    for (const char *key : {"error", "detail", "message"}) {
-      if (body.contains(key)) {
-        const auto &v = body.at(key);
-        if (v.is_string())
-          return v.get<std::string>();
-        return v.dump();
-      }
+    // error_text is the human-readable one ({"error_code":2,"error_slug":"...",
+    // "error_text":"Нет тарифного плана"}); the rest are the usual REST names
+    for (const char *key : {"error_text", "message", "detail", "error", "error_description"}) {
+      auto it = body.find(key);
+      if (it == body.end() || it->is_null())
+        continue;
+      std::string text = it->is_string() ? it->get<std::string>() : it->dump();
+      if (!text.empty())
+        return text;
     }
+  } else if (body.is_string() && !body.get<std::string>().empty()) {
+    return body.get<std::string>();
   }
   return "HTTP " + std::to_string(status);
+}
+
+std::string VKPCAPI::ApiException::userMessage() const {
+  std::string text = messageFromBody(status, body);
+
+  if (body.is_object()) {
+    auto slug = body.find("error_slug");
+    bool noPlan = (slug != body.end() && slug->is_string() &&
+                   slug->get<std::string>().find("plan") != std::string::npos) ||
+                  text.find("тарифного плана") != std::string::npos;
+    if (noPlan)
+      text += "\nКупите тариф или получите бесплатный час на cloud.vkplay.ru";
+  }
+  return text;
 }
 
 nlohmann::json VKPCAPI::performGet(const std::string &endpoint) {
@@ -68,7 +86,17 @@ nlohmann::json VKPCAPI::performPost(const std::string &endpoint, const nlohmann:
   if (!r.ok()) {
     if (r.status == 403 && tryRefreshToken())
       return performPost(endpoint, body);
-    throw ApiException(r.status, r.body.empty() ? nlohmann::json() : r.json(), r.error.empty() ? "HTTP " + std::to_string(r.status) : r.error);
+    {
+      // r.json() throws on a non-JSON body (an HTML error page, say); the status is what matters then
+      nlohmann::json errBody;
+      if (!r.body.empty()) {
+        std::string err;
+        errBody = r.json(&err);
+        if (!err.empty())
+          errBody = nullptr;
+      }
+      throw ApiException(r.status, std::move(errBody), r.error);
+    }
   }
 
   return r.body.empty() ? nlohmann::json::object() : r.json();

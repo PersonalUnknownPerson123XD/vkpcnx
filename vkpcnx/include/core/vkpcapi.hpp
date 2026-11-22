@@ -16,11 +16,14 @@ public:
 
   // Non-2xx reply (after token refresh); `body` is the parsed error JSON if any
   struct ApiException : public Exception {
-    ApiException(long status, nlohmann::json body, const std::string &what)
-      : Exception(what), status(status), body(std::move(body)) {}
+    // `transportError` is the curl error, if the request itself failed
+    ApiException(long status, nlohmann::json body, const std::string &transportError)
+      : Exception(transportError.empty() ? messageFromBody(status, body) : transportError),
+        status(status), body(std::move(body)) {}
+    static std::string messageFromBody(long status, const nlohmann::json &body);
     long status;
     nlohmann::json body;
-    // "error" / "detail" / "message" field of the body, or the HTTP status
+    // The server's own text ("error_text" / "message" / "detail" / "error"), or "HTTP <code>"
     std::string userMessage() const;
   };
 

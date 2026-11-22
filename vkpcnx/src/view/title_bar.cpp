@@ -70,10 +70,19 @@ void CustomTitlebarActivity::setupTitleBar() {
     return true;
   });
 
-  auto cb = [accountBox, accountLabel, accountAvatar](const nlohmann::json &account) {
-    accountLabel->setText(account.at("name").get<std::string>());
-    auto userId = account.at("session").at("user_id").get<int>();
-    utils::loadImageFromUrl(accountAvatar, fmt::format(utils::AVATAR_URL_FMT, userId));
+  auto lastAvatarUser = std::make_shared<int>(-1);
+  auto cb = [accountBox, accountLabel, accountAvatar, lastAvatarUser](const nlohmann::json &account) {
+    try {
+      accountLabel->setText(account.at("name").get<std::string>());
+      auto userId = account.at("session").at("user_id").get<int>();
+      if (*lastAvatarUser != userId) { // updates come every minute; reload the avatar only once
+        *lastAvatarUser = userId;
+        utils::loadImageFromUrl(accountAvatar, fmt::format(utils::AVATAR_URL_FMT, userId));
+      }
+    } catch (const nlohmann::json::exception &e) {
+      brls::Logger::warning("TitleBar: unexpected account json: {}", e.what());
+      return;
+    }
     accountBox->setVisibility(brls::Visibility::VISIBLE);
     accountBox->setFocusable(true);
   };

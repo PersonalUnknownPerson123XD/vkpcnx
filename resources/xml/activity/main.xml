@@ -1,9 +1,11 @@
 <brls:AppletFrame id="main/root">
-  <brls:Box width="auto" height="auto" paddingLeft="30" paddingRight="30">
+  <brls:Box width="auto" height="auto" axis="column" paddingLeft="30" paddingRight="30">
     <brls:Box id="main/loader" axis="column" alignItems="center" justifyContent="center" grow="1">
       <brls:ProgressSpinner id="login/spinner" size="large" width="100" height="100"/>
       <brls:Label alpha="0.5" marginTop="20" text="Устанавливаем все игры..."/>
     </brls:Box>
+
+    <brls:Label id="main/status" visibility="gone" alpha="0.6" horizontalAlign="center" margin="12" text=""/>
 
     <brls:RecyclerFrame visibility="gone" id="main/content" width="auto" grow="1"/>
   </brls:Box>

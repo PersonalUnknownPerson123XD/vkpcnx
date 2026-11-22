@@ -1,4 +1,5 @@
 #include "activity/stream_activity.hpp"
+#include "core/account_info.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -398,6 +399,9 @@ StreamActivity::~StreamActivity() {
     brls::cancelDelay(hudTimer_);
   session_.reset();
   platform::clearControllerAlert();
+  // The server settles the minutes balance when the session ends; the menus
+  // below show it, so pull a fresh copy shortly after
+  brls::delay(2000, [] { AccountInfo::instance().fetchAsync(); });
 }
 
 StreamSession::Config StreamActivity::buildConfig() const {
